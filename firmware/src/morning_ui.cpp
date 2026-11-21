@@ -17,12 +17,12 @@
 #define COLOR_LIGHT_GRAY lv_color_hex(0xCCCCCC)
 
 // LVGL symbols for icons
-#define ICON_EVENT     LV_SYMBOL_CALENDAR
+#define ICON_EVENT     LV_SYMBOL_BELL      // LVGL 9 has no CALENDAR symbol
 #define ICON_BRING     LV_SYMBOL_HOME
 #define ICON_ACTION    LV_SYMBOL_WARNING
 #define ICON_UNIFORM   LV_SYMBOL_IMAGE
 #define ICON_ACTIVITY  LV_SYMBOL_PLAY
-#define ICON_WEATHER   LV_SYMBOL_CLOUD
+#define ICON_WEATHER   ""                  // LVGL 9 has no CLOUD symbol
 #define ICON_PARTY     LV_SYMBOL_CHARGE
 
 static MorningScreen current_screen = MORNING_SCREEN_CLAWD;
@@ -107,6 +107,7 @@ static void create_kid_screen(lv_obj_t** container) {
     lv_obj_set_style_pad_all(*container, 20, 0);
     lv_obj_add_flag(*container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(*container, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(*container, LV_OBJ_FLAG_SCROLLABLE);  // LVGL scroll would eat vertical swipes
     
     // Add swipe/touch handler
     lv_obj_add_event_cb(*container, handle_touch_event, LV_EVENT_PRESSING, NULL);
@@ -122,6 +123,7 @@ static void create_parents_screen() {
     lv_obj_set_style_pad_all(parents_container, 20, 0);
     lv_obj_add_flag(parents_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(parents_container, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(parents_container, LV_OBJ_FLAG_SCROLLABLE);  // LVGL scroll would eat vertical swipes
     
     // Add swipe/touch handler
     lv_obj_add_event_cb(parents_container, handle_touch_event, LV_EVENT_PRESSING, NULL);
@@ -347,6 +349,7 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
     
     // Top bar
     lv_obj_t* top_bar = lv_obj_create(container);
+    lv_obj_clear_flag(top_bar, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
     lv_obj_set_size(top_bar, 440, 40);
     lv_obj_align(top_bar, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(top_bar, COLOR_BG, 0);
@@ -361,7 +364,7 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
     
     // Weather
     char weather_str[32];
-    snprintf(weather_str, sizeof(weather_str), "%s %.0f%c", ICON_WEATHER, max_temp, 0xB0);
+    snprintf(weather_str, sizeof(weather_str), "%s%.0f\xC2\xB0", ICON_WEATHER, max_temp);  // UTF-8 degree sign
     lv_obj_t* weather_label = lv_label_create(top_bar);
     lv_label_set_text(weather_label, weather_str);
     lv_obj_set_style_text_font(weather_label, &morning_font_16, 0);
@@ -369,6 +372,7 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
     
     // Day dots (1 of 7)
     lv_obj_t* dots = lv_obj_create(container);
+    lv_obj_clear_flag(dots, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
     lv_obj_set_size(dots, 100, 10);
     lv_obj_align(dots, LV_ALIGN_TOP_MID, 0, 45);
     lv_obj_set_style_bg_color(dots, COLOR_BG, 0);
@@ -379,6 +383,7 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
     
     for (int i = 0; i < 7; i++) {
         lv_obj_t* dot = lv_obj_create(dots);
+        lv_obj_clear_flag(dot, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
         lv_obj_set_size(dot, 8, 8);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_border_width(dot, 0, 0);
@@ -504,6 +509,7 @@ static void update_parents_screen(const char* date_str) {
     
     // Top bar
     lv_obj_t* top_bar = lv_obj_create(parents_container);
+    lv_obj_clear_flag(top_bar, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
     lv_obj_set_size(top_bar, 440, 40);
     lv_obj_align(top_bar, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(top_bar, COLOR_BG, 0);
@@ -518,6 +524,7 @@ static void update_parents_screen(const char* date_str) {
     
     // Day dots
     lv_obj_t* dots = lv_obj_create(parents_container);
+    lv_obj_clear_flag(dots, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
     lv_obj_set_size(dots, 100, 10);
     lv_obj_align(dots, LV_ALIGN_TOP_MID, 0, 45);
     lv_obj_set_style_bg_color(dots, COLOR_BG, 0);
@@ -528,6 +535,7 @@ static void update_parents_screen(const char* date_str) {
     
     for (int i = 0; i < 7; i++) {
         lv_obj_t* dot = lv_obj_create(dots);
+        lv_obj_clear_flag(dot, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
         lv_obj_set_size(dot, 8, 8);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_border_width(dot, 0, 0);

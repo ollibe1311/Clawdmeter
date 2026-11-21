@@ -4,11 +4,8 @@
  * Opts: --font /tmp/AtkinsonHyperlegible-Regular.ttf --size 20 --range 0x20-0x7E,0xB0 --format lvgl --bpp 4 --no-compress -o morning_font_20.c
  ******************************************************************************/
 
-#ifdef LV_LVGL_H_INCLUDE_SIMPLE
 #include "lvgl.h"
-#else
-#include "lvgl/lvgl.h"
-#endif
+LV_FONT_DECLARE(lv_font_montserrat_14);
 
 #ifndef MORNING_FONT_20
 #define MORNING_FONT_20 1
@@ -1494,11 +1491,10 @@ const lv_font_t morning_font_20 = {
     .underline_position = -4,
     .underline_thickness = 3,
     .dsc = &font_dsc           /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */,
-    .fallback = NULL,
+    .fallback = &lv_font_montserrat_14,  /* LV_SYMBOL_* icons */
     .user_data = NULL
 };
 
 
 
-_20*/
-
+#endif /*#if MORNING_FONT_20*/
