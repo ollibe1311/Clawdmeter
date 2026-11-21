@@ -88,14 +88,33 @@ static void create_clawd_screen() {
     // Initialize splash animation system
     splash_init(clawd_container);
     
-    // Add tap handler for Clawd dance
+    // splash_init() puts a full-screen lv_obj on top of clawd_container.
+    // lv_obj_create() makes objects CLICKABLE by default, so that overlay was
+    // swallowing every tap and clawd_container's CLICKED handler never ran.
+    // Let taps fall through / bubble to the page, and also hook the overlay
+    // directly so a tap works whichever object LVGL picks.
+    lv_obj_t* splash_root = splash_get_root();
+    if (splash_root) {
+        lv_obj_add_flag(splash_root, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_event_cb(splash_root, handle_clawd_tap, LV_EVENT_CLICKED, NULL);
+        for (uint32_t i = 0; i < lv_obj_get_child_count(splash_root); i++) {
+            lv_obj_t* ch = lv_obj_get_child(splash_root, i);
+            lv_obj_clear_flag(ch, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(ch, LV_OBJ_FLAG_EVENT_BUBBLE);
+        }
+    }
+
+    // Tap Clawd -> first kid page (agreed spec)
     lv_obj_add_event_cb(clawd_container, handle_clawd_tap, LV_EVENT_CLICKED, NULL);
 }
 
 static void handle_clawd_tap(lv_event_t* e) {
-    // Tap on Clawd makes him dance
-    splash_next();  // Cycle to dancing animation
+    // Bubbling can deliver the same click to both the overlay and the page;
+    // the first call switches screens, so the second is a no-op.
+    if (current_screen != MORNING_SCREEN_CLAWD) return;
+    Serial.println("UI: Clawd tapped -> kid page");
     morning_ui_wake();
+    morning_ui_show_screen(MORNING_SCREEN_KID1);
 }
 
 static void create_kid_screen(lv_obj_t** container) {
@@ -145,6 +164,8 @@ static void handle_touch_event(lv_event_t* e) {
         int dx = point.x - swipe_start.x;
         int dy = point.y - swipe_start.y;
         swipe_active = false;
+        Serial.printf("UI: gesture start=(%d,%d) dx=%d dy=%d screen=%d\n",
+                      (int)swipe_start.x, (int)swipe_start.y, dx, dy, (int)current_screen);
         
         // Tap on top strip (y < 60) returns to Clawd
         if (swipe_start.y < 60 && abs(dx) < 20 && abs(dy) < 20) {
@@ -203,6 +224,7 @@ static void handle_touch_event(lv_event_t* e) {
 
 void morning_ui_show_screen(MorningScreen screen) {
     // Hide all
+    if (screen != MORNING_SCREEN_CLAWD) splash_hide();
     if (clawd_container) lv_obj_add_flag(clawd_container, LV_OBJ_FLAG_HIDDEN);
     if (kid1_container) lv_obj_add_flag(kid1_container, LV_OBJ_FLAG_HIDDEN);
     if (kid2_container) lv_obj_add_flag(kid2_container, LV_OBJ_FLAG_HIDDEN);

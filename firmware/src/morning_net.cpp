@@ -502,6 +502,9 @@ void morning_net_process_serial() {
                 Serial.printf("WIFI_SSID=%s\n", ssid);
                 Serial.printf("FEED_URL=%s\n", url);
                 Serial.println("(password hidden)");
+            } else if (strcmp(cmd_buf, "STATUS") == 0) {
+                extern void touch_hal_debug_status(void);
+                touch_hal_debug_status();
             } else if (strcmp(cmd_buf, "REBOOT") == 0) {
                 Serial.println("Rebooting...");
                 delay(100);
