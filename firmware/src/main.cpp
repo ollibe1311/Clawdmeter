@@ -1,3 +1,8 @@
+#ifdef BOARD_MORNING_BOARD
+// Morning Board uses its own main implementation
+#include "morning_main.cpp"
+#else
+// Standard Clawdmeter implementation
 #include <Arduino.h>
 #include <Wire.h>
 #include <lvgl.h>
@@ -397,3 +402,4 @@ void loop() {
 
     delay(5);
 }
+#endif  // BOARD_MORNING_BOARD

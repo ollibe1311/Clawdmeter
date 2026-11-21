@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "generated": "2026-11-21T06:00:00+11:00",
+  "days": [
+    {
+      "date": "2026-11-21",
+      "birthdays": [],
+      "kids": {
+        "arlo": {
+          "uniform": null,
+          "activity": ["football", "swimming"],
+          "tonight": ["Pack footy boots", "Fill water bottle"],
+          "items": [
+            {"text": "Library bag", "type": "bring"},
+            {"text": "Maths homework", "type": "action", "deadline": "2026-11-21"},
+            {"text": "Football training 4pm", "type": "activity"}
+          ]
+        },
+        "willow": {
+          "uniform": null,
+          "activity": ["dance"],
+          "tonight": ["Practice violin"],
+          "items": [
+            {"text": "Show and tell toy", "type": "bring"},
+            {"text": "Dance class 3:30pm", "type": "activity"},
+            {"text": "Reading log signed", "type": "action", "deadline": "2026-11-22"}
+          ]
+        }
+      },
+      "parents": {
+        "items": [
+          {"text": "Parent-teacher meeting 6pm", "type": "event"},
+          {"text": "Pick up dry cleaning", "type": "action", "deadline": "2026-11-21"}
+        ]
+      }
+    },
+    {
+      "date": "2026-11-22",
+      "birthdays": ["Grandma"],
+      "kids": {
+        "arlo": {
+          "uniform": "sport",
+          "activity": ["football"],
+          "tonight": [],
+          "items": [
+            {"text": "Sport carnival - wear sport uniform", "type": "event"},
+            {"text": "Hat and sunscreen", "type": "bring"}
+          ]
+        },
+        "willow": {
+          "uniform": null,
+          "activity": ["art"],
+          "tonight": ["Finish birthday card for Grandma"],
+          "items": [
+            {"text": "Art supplies", "type": "bring"},
+            {"text": "Birthday card for Grandma", "type": "action", "deadline": "2026-11-22"}
+          ]
+        }
+      },
+      "parents": {
+        "items": [
+          {"text": "Grandma's birthday dinner 7pm", "type": "event"}
+        ]
+      }
+    },
+    {
+      "date": "2026-11-23",
+      "birthdays": [],
+      "kids": {
+        "arlo": {
+          "uniform": null,
+          "activity": [],
+          "tonight": [],
+          "items": []
+        },
+        "willow": {
+          "uniform": null,
+          "activity": ["choir"],
+          "tonight": [],
+          "items": [
+            {"text": "Choir practice 3pm", "type": "activity"}
+          ]
+        }
+      },
+      "parents": {
+        "items": []
+      }
+    },
+    {
+      "date": "2026-11-24",
+      "birthdays": [],
+      "kids": {
+        "arlo": {
+          "uniform": null,
+          "activity": ["swimming"],
+          "tonight": ["Pack swimming bag"],
+          "items": [
+            {"text": "Swimming lesson 4pm", "type": "activity"},
+            {"text": "Goggles and towel", "type": "bring"}
+          ]
+        },
+        "willow": {
+          "uniform": null,
+          "activity": ["violin"],
+          "tonight": [],
+          "items": [
+            {"text": "Violin lesson 3:30pm", "type": "activity"}
+          ]
+        }
+      },
+      "parents": {
+        "items": [
+          {"text": "Grocery shopping", "type": "action", "deadline": "2026-11-24"}
+        ]
+      }
+    },
+    {
+      "date": "2026-11-25",
+      "birthdays": [],
+      "kids": {
+        "arlo": {
+          "uniform": null,
+          "activity": ["trombone"],
+          "tonight": [],
+          "items": [
+            {"text": "Trombone practice 4pm", "type": "activity"}
+          ]
+        },
+        "willow": {
+          "uniform": "mufti",
+          "activity": ["party"],
+          "tonight": [],
+          "items": [
+            {"text": "Class party - wear mufti", "type": "event"},
+            {"text": "Bring plate of food", "type": "bring"}
+          ]
+        }
+      },
+      "parents": {
+        "items": []
+      }
+    },
+    {
+      "date": "2026-11-26",
+      "birthdays": [],
+      "kids": {
+        "arlo": {
+          "uniform": null,
+          "activity": [],
+          "tonight": [],
+          "items": []
+        },
+        "willow": {
+          "uniform": null,
+          "activity": [],
+          "tonight": [],
+          "items": []
+        }
+      },
+      "parents": {
+        "items": [
+          {"text": "Family beach day 10am", "type": "event"}
+        ]
+      }
+    },
+    {
+      "date": "2026-11-27",
+      "birthdays": [],
+      "kids": {
+        "arlo": {
+          "uniform": null,
+          "activity": [],
+          "tonight": [],
+          "items": []
+        },
+        "willow": {
+          "uniform": null,
+          "activity": [],
+          "tonight": [],
+          "items": []
+        }
+      },
+      "parents": {
+        "items": []
+      }
+    }
+  ]
+}
