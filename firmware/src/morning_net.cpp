@@ -1,3 +1,4 @@
+#ifdef BOARD_MORNING_BOARD
 #include "morning_net.h"
 #include "morning_config.h"
 #include <WiFi.h>
@@ -7,6 +8,7 @@
 #include <time.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 
 static const char* TZ_STRING = "AEST-10AEDT,M10.1.0,M4.1.0/3";
 static const char* NTP_SERVER = "pool.ntp.org";
@@ -19,7 +21,10 @@ static uint32_t boot_time_ms = 0;
 static bool wifi_connected = false;
 static bool time_synced = false;
 
-static FeedData cached_feed = {};
+// FeedData is ~100 KB. As a static it sat in internal RAM and starved mbedTLS
+// ("SSL - Memory allocation failed" on every HTTPS fetch). Keep it in PSRAM.
+static FeedData* cached_feed_p = nullptr;
+#define cached_feed (*cached_feed_p)
 static WeatherData cached_weather = {};
 static uint32_t last_feed_fetch = 0;
 static uint32_t last_weather_fetch = 0;
@@ -38,6 +43,10 @@ static bool save_cached_feed();
 
 void morning_net_init() {
     boot_time_ms = millis();
+    if (!cached_feed_p) {
+        cached_feed_p = (FeedData*)heap_caps_calloc(1, sizeof(FeedData), MALLOC_CAP_SPIRAM);
+        if (!cached_feed_p) cached_feed_p = (FeedData*)calloc(1, sizeof(FeedData));
+    }
     
     // Initialize LittleFS for caching
     if (!LittleFS.begin(true)) {
@@ -505,3 +514,4 @@ void morning_net_process_serial() {
         }
     }
 }
+#endif  // BOARD_MORNING_BOARD

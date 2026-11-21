@@ -43,9 +43,16 @@ def load_env_file(path):
     return config
 
 
-def send_command(ser, cmd):
-    """Send a command and wait for response."""
-    print(f"Sending: {cmd}")
+def mask_command(cmd):
+    """Never echo the WiFi password: mask anything after SET WIFI_PASS=."""
+    if cmd.startswith("SET WIFI_PASS="):
+        return "SET WIFI_PASS=******"
+    return cmd
+
+
+def send_command(ser, cmd, secret=None):
+    """Send a command and wait for response. Output never contains `secret`."""
+    print(f"Sending: {mask_command(cmd)}")
     ser.write((cmd + '\n').encode())
     time.sleep(0.1)
     
@@ -60,6 +67,8 @@ def send_command(ser, cmd):
         time.sleep(0.05)
     
     for line in response:
+        if secret:
+            line = line.replace(secret, "******")
         print(f"  <- {line}")
     return response
 
@@ -85,12 +94,13 @@ def provision(port, env_path):
         print("\nProvisioning Morning Board...")
         
         # Send configuration
-        send_command(ser, f"SET WIFI_SSID={config['WIFI_SSID']}")
-        send_command(ser, f"SET WIFI_PASS={config['WIFI_PASS']}")
-        send_command(ser, f"SET FEED_URL={config['FEED_URL']}")
+        pw = config['WIFI_PASS']
+        send_command(ser, f"SET WIFI_SSID={config['WIFI_SSID']}", pw)
+        send_command(ser, f"SET WIFI_PASS={pw}", pw)
+        send_command(ser, f"SET FEED_URL={config['FEED_URL']}", pw)
         
         print("\nVerifying configuration...")
-        send_command(ser, "SHOW")
+        send_command(ser, "SHOW", pw)
         
         print("\nProvisioning complete!")
         print("To reboot the board, send: REBOOT")
@@ -99,7 +109,7 @@ def provision(port, env_path):
         # Ask if user wants to reboot
         response = input("\nReboot now? [y/N]: ")
         if response.lower() == 'y':
-            send_command(ser, "REBOOT")
+            send_command(ser, "REBOOT", pw)
             print("Board rebooting...")
         
         ser.close()
@@ -127,7 +137,7 @@ Example .env file:
     parser.add_argument(
         '--port',
         default='/dev/ttyACM0',
-        help='Serial port (default: /dev/ttyACM0)'
+        help='Serial port (default: /dev/ttyACM0; macOS: /dev/cu.usbmodem101)'
     )
     parser.add_argument(
         '--env',

@@ -21,3 +21,9 @@ __pycache__/
 
 # Morning Board provisioning secrets
 tools/provision.env
+
+# Local secrets (never commit)
+wifi.env
+*.env
+!tools/provision.env.example
+include/wifi_secrets.h

@@ -1,3 +1,4 @@
+#ifdef BOARD_MORNING_BOARD
 #include "morning_config.h"
 #include <Preferences.h>
 
@@ -115,3 +116,4 @@ void morning_config_set_weather_location(float lat, float lon) {
 void morning_config_clear() {
     prefs.clear();
 }
+#endif  // BOARD_MORNING_BOARD

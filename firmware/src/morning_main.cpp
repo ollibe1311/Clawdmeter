@@ -1,4 +1,6 @@
+#ifdef BOARD_MORNING_BOARD
 #include <Arduino.h>
+#include <WiFi.h>
 #include <lvgl.h>
 #include <Wire.h>
 #include <esp_heap_caps.h>
@@ -153,10 +155,10 @@ void loop() {
     power_hal_tick();
     display_hal_tick();
     
-    // Process serial provisioning commands
-    if (morning_net_in_provision_window()) {
-        morning_net_process_serial();
-    }
+    // Process serial provisioning commands. Always accepted over USB serial:
+    // gating on the provision window closed it as soon as WIFI_SSID was set,
+    // so WIFI_PASS / FEED_URL / REBOOT that followed were silently dropped.
+    morning_net_process_serial();
     
     // Check screen schedule every 10 seconds
     if (millis() - last_schedule_check > 10000) {
@@ -187,3 +189,4 @@ void loop() {
     
     delay(5);
 }
+#endif  // BOARD_MORNING_BOARD

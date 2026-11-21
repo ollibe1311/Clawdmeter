@@ -1,3 +1,7 @@
+#ifdef BOARD_MORNING_BOARD
+#include <Arduino.h>
+#include <string.h>
+#include <stdio.h>
 #include "morning_ui.h"
 #include "morning_config.h"
 #include "morning_fonts.h"
@@ -61,6 +65,12 @@ static void create_clawd_screen() {
     lv_obj_set_size(clawd_container, 480, 480);
     lv_obj_set_style_bg_color(clawd_container, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_border_width(clawd_container, 0, 0);
+    // Default theme gives lv_obj padding + radius; the splash is placed at
+    // (0,0) of the content area, so the padding pushed it right/down and left
+    // an off-white L strip on the top/left edges. Zero them.
+    lv_obj_set_style_pad_all(clawd_container, 0, 0);
+    lv_obj_set_style_radius(clawd_container, 0, 0);
+    lv_obj_set_pos(clawd_container, 0, 0);
     lv_obj_clear_flag(clawd_container, LV_OBJ_FLAG_SCROLLABLE);
     
     // Initialize splash animation system
@@ -75,6 +85,7 @@ static void create_kid_screen(lv_obj_t** container, bool is_arlo) {
     lv_obj_set_size(*container, 480, 480);
     lv_obj_set_style_bg_color(*container, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_border_width(*container, 0, 0);
+    lv_obj_set_style_radius(*container, 0, 0);
     lv_obj_set_style_pad_all(*container, 20, 0);
     lv_obj_add_flag(*container, LV_OBJ_FLAG_HIDDEN);
 }
@@ -84,6 +95,7 @@ static void create_parents_screen() {
     lv_obj_set_size(parents_container, 480, 480);
     lv_obj_set_style_bg_color(parents_container, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_border_width(parents_container, 0, 0);
+    lv_obj_set_style_radius(parents_container, 0, 0);
     lv_obj_set_style_pad_all(parents_container, 20, 0);
     lv_obj_add_flag(parents_container, LV_OBJ_FLAG_HIDDEN);
 }
@@ -338,3 +350,4 @@ static int get_arlo_first_offset() {
     int days_since = (now - epoch_time) / 86400;
     return days_since % 2;
 }
+#endif  // BOARD_MORNING_BOARD

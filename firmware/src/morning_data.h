@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 
 #define MAX_NAME_LEN 32
 #define MAX_TEXT_LEN 128

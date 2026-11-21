@@ -1,6 +1,5 @@
 #ifdef BOARD_MORNING_BOARD
-// Morning Board uses its own main implementation
-#include "morning_main.cpp"
+// Morning Board: setup()/loop() live in morning_main.cpp (compiled as its own unit)
 #else
 // Standard Clawdmeter implementation
 #include <Arduino.h>
