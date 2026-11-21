@@ -9,16 +9,21 @@
 #include <time.h>
 
 // Colors - warm off-white background, kid accents
-#define COLOR_BG         0xF7F3EC  // Warm off-white
-#define COLOR_TEXT       0x1A1A1A  // Dark gray
-#define COLOR_ARLO       0x2E9E5B  // Green
-#define COLOR_WILLOW     0xFF2E88  // Hot pink
-#define COLOR_PARENT     0xFF6A13  // Orange
+#define COLOR_BG         lv_color_hex(0xF7F3EC)
+#define COLOR_TEXT       lv_color_hex(0x1A1A1A)
+#define COLOR_ARLO       lv_color_hex(0x2E9E5B)
+#define COLOR_WILLOW     lv_color_hex(0xFF2E88)
+#define COLOR_PARENT     lv_color_hex(0xFF6A13)
+#define COLOR_LIGHT_GRAY lv_color_hex(0xCCCCCC)
 
-// Declare fonts (we'll generate these later)
-LV_FONT_DECLARE(morning_font_48);  // Name
-LV_FONT_DECLARE(morning_font_28);  // Items
-LV_FONT_DECLARE(morning_font_20);  // Details
+// LVGL symbols for icons
+#define ICON_EVENT     LV_SYMBOL_CALENDAR
+#define ICON_BRING     LV_SYMBOL_HOME
+#define ICON_ACTION    LV_SYMBOL_WARNING
+#define ICON_UNIFORM   LV_SYMBOL_IMAGE
+#define ICON_ACTIVITY  LV_SYMBOL_PLAY
+#define ICON_WEATHER   LV_SYMBOL_CLOUD
+#define ICON_PARTY     LV_SYMBOL_CHARGE
 
 static MorningScreen current_screen = MORNING_SCREEN_CLAWD;
 static int current_day_offset = 0;  // 0 = today, 1-6 = future days
@@ -33,26 +38,35 @@ static lv_obj_t* kid1_container = nullptr;
 static lv_obj_t* kid2_container = nullptr;
 static lv_obj_t* parents_container = nullptr;
 
+// Swipe gesture tracking
+static lv_point_t swipe_start = {0, 0};
+static bool swipe_active = false;
+#define SWIPE_THRESHOLD 50
+
 // Forward declarations
 static void create_clawd_screen();
-static void create_kid_screen(lv_obj_t** container, bool is_arlo);
+static void create_kid_screen(lv_obj_t** container);
 static void create_parents_screen();
 static void update_kid_screen(lv_obj_t* container, const KidDay* kid, 
-                              const char* name, uint32_t color, 
-                              float max_temp, int precip_prob);
-static void update_parents_screen();
+                              const char* name, lv_color_t color, 
+                              float max_temp, int precip_prob, const char* date_str);
+static void update_parents_screen(const char* date_str);
 static const char* get_day_name(int day_of_week);
+static const char* get_month_name(int month);
 static bool should_show_tonight();
 static int get_arlo_first_offset();
+static const char* get_item_icon(ItemType type);
+static void handle_touch_event(lv_event_t* e);
+static void handle_clawd_tap(lv_event_t* e);
 
 void morning_ui_init() {
     lv_obj_t* screen = lv_scr_act();
-    lv_obj_set_style_bg_color(screen, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_bg_color(screen, COLOR_BG, 0);
     
     // Create all screen containers (hidden by default)
     create_clawd_screen();
-    create_kid_screen(&kid1_container, true);
-    create_kid_screen(&kid2_container, false);
+    create_kid_screen(&kid1_container);
+    create_kid_screen(&kid2_container);
     create_parents_screen();
     
     // Start on Clawd screen
@@ -63,41 +77,126 @@ void morning_ui_init() {
 static void create_clawd_screen() {
     clawd_container = lv_obj_create(lv_scr_act());
     lv_obj_set_size(clawd_container, 480, 480);
-    lv_obj_set_style_bg_color(clawd_container, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_bg_color(clawd_container, COLOR_BG, 0);
     lv_obj_set_style_border_width(clawd_container, 0, 0);
-    // Default theme gives lv_obj padding + radius; the splash is placed at
-    // (0,0) of the content area, so the padding pushed it right/down and left
-    // an off-white L strip on the top/left edges. Zero them.
     lv_obj_set_style_pad_all(clawd_container, 0, 0);
     lv_obj_set_style_radius(clawd_container, 0, 0);
     lv_obj_set_pos(clawd_container, 0, 0);
     lv_obj_clear_flag(clawd_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(clawd_container, LV_OBJ_FLAG_CLICKABLE);
     
     // Initialize splash animation system
     splash_init(clawd_container);
     
-    // Add touch handler to move to pages
-    lv_obj_add_flag(clawd_container, LV_OBJ_FLAG_CLICKABLE);
+    // Add tap handler for Clawd dance
+    lv_obj_add_event_cb(clawd_container, handle_clawd_tap, LV_EVENT_CLICKED, NULL);
 }
 
-static void create_kid_screen(lv_obj_t** container, bool is_arlo) {
+static void handle_clawd_tap(lv_event_t* e) {
+    // Tap on Clawd makes him dance
+    splash_next();  // Cycle to dancing animation
+    morning_ui_wake();
+}
+
+static void create_kid_screen(lv_obj_t** container) {
     *container = lv_obj_create(lv_scr_act());
     lv_obj_set_size(*container, 480, 480);
-    lv_obj_set_style_bg_color(*container, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_bg_color(*container, COLOR_BG, 0);
     lv_obj_set_style_border_width(*container, 0, 0);
     lv_obj_set_style_radius(*container, 0, 0);
     lv_obj_set_style_pad_all(*container, 20, 0);
     lv_obj_add_flag(*container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(*container, LV_OBJ_FLAG_CLICKABLE);
+    
+    // Add swipe/touch handler
+    lv_obj_add_event_cb(*container, handle_touch_event, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(*container, handle_touch_event, LV_EVENT_RELEASED, NULL);
 }
 
 static void create_parents_screen() {
     parents_container = lv_obj_create(lv_scr_act());
     lv_obj_set_size(parents_container, 480, 480);
-    lv_obj_set_style_bg_color(parents_container, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_bg_color(parents_container, COLOR_BG, 0);
     lv_obj_set_style_border_width(parents_container, 0, 0);
     lv_obj_set_style_radius(parents_container, 0, 0);
     lv_obj_set_style_pad_all(parents_container, 20, 0);
     lv_obj_add_flag(parents_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(parents_container, LV_OBJ_FLAG_CLICKABLE);
+    
+    // Add swipe/touch handler
+    lv_obj_add_event_cb(parents_container, handle_touch_event, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(parents_container, handle_touch_event, LV_EVENT_RELEASED, NULL);
+}
+
+static void handle_touch_event(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t* indev = lv_indev_get_act();
+    lv_point_t point;
+    lv_indev_get_point(indev, &point);
+    
+    if (code == LV_EVENT_PRESSING) {
+        if (!swipe_active) {
+            swipe_start = point;
+            swipe_active = true;
+        }
+    } else if (code == LV_EVENT_RELEASED && swipe_active) {
+        int dx = point.x - swipe_start.x;
+        int dy = point.y - swipe_start.y;
+        swipe_active = false;
+        
+        // Tap on top strip (y < 60) returns to Clawd
+        if (swipe_start.y < 60 && abs(dx) < 20 && abs(dy) < 20) {
+            morning_ui_reset_to_clawd();
+            return;
+        }
+        
+        // Determine swipe direction
+        if (abs(dx) > abs(dy) && abs(dx) > SWIPE_THRESHOLD) {
+            // Horizontal swipe - change day
+            if (dx > 0) {
+                // Swipe right - previous day
+                if (current_day_offset > 0) {
+                    current_day_offset--;
+                    morning_ui_update_feed(current_feed);
+                }
+            } else {
+                // Swipe left - next day
+                if (current_day_offset < 6) {
+                    current_day_offset++;
+                    morning_ui_update_feed(current_feed);
+                }
+            }
+        } else if (abs(dy) > abs(dx) && abs(dy) > SWIPE_THRESHOLD) {
+            // Vertical swipe - change page
+            if (dy > 0) {
+                // Swipe down - previous page
+                switch (current_screen) {
+                    case MORNING_SCREEN_KID2:
+                        morning_ui_show_screen(MORNING_SCREEN_KID1);
+                        break;
+                    case MORNING_SCREEN_PARENTS:
+                        morning_ui_show_screen(MORNING_SCREEN_KID2);
+                        break;
+                    default:
+                        break;
+                }
+            } else {
+                // Swipe up - next page
+                switch (current_screen) {
+                    case MORNING_SCREEN_KID1:
+                        morning_ui_show_screen(MORNING_SCREEN_KID2);
+                        break;
+                    case MORNING_SCREEN_KID2:
+                        morning_ui_show_screen(MORNING_SCREEN_PARENTS);
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        
+        morning_ui_wake();
+    }
 }
 
 void morning_ui_show_screen(MorningScreen screen) {
@@ -133,34 +232,42 @@ void morning_ui_show_screen(MorningScreen screen) {
 void morning_ui_update_feed(const FeedData* feed) {
     current_feed = feed;
     
-    if (!feed || !feed->valid) return;
+    if (!feed || !feed->valid || current_day_offset >= feed->day_count) return;
     
-    // Update all kid screens with current day data
-    if (current_day_offset < feed->day_count) {
-        const DayData* day = &feed->days[current_day_offset];
-        float max_temp = current_weather && current_weather->valid ? 
-                         current_weather->max_temp[current_day_offset] : 20.0f;
-        int precip = current_weather && current_weather->valid ? 
-                     current_weather->precip_prob[current_day_offset] : 0;
-        
-        // Determine which kid is first (alternates daily)
-        int arlo_first = get_arlo_first_offset();
-        
-        if (arlo_first == 0) {
-            update_kid_screen(kid1_container, &day->arlo, "Arlo", COLOR_ARLO, max_temp, precip);
-            update_kid_screen(kid2_container, &day->willow, "Willow", COLOR_WILLOW, max_temp, precip);
-        } else {
-            update_kid_screen(kid1_container, &day->willow, "Willow", COLOR_WILLOW, max_temp, precip);
-            update_kid_screen(kid2_container, &day->arlo, "Arlo", COLOR_ARLO, max_temp, precip);
-        }
-        
-        update_parents_screen();
+    const DayData* day = &feed->days[current_day_offset];
+    float max_temp = (current_weather && current_weather->valid && current_day_offset < 7) ? 
+                     current_weather->max_temp[current_day_offset] : 20.0f;
+    int precip = (current_weather && current_weather->valid && current_day_offset < 7) ? 
+                 current_weather->precip_prob[current_day_offset] : 0;
+    
+    // Format date string
+    char date_str[32];
+    struct tm tm_date = {0};
+    sscanf(day->date, "%d-%d-%d", &tm_date.tm_year, &tm_date.tm_mon, &tm_date.tm_mday);
+    tm_date.tm_year -= 1900;
+    tm_date.tm_mon -= 1;
+    mktime(&tm_date);
+    snprintf(date_str, sizeof(date_str), "%s %d %s", 
+             get_day_name(tm_date.tm_wday), 
+             tm_date.tm_mday,
+             get_month_name(tm_date.tm_mon));
+    
+    // Determine which kid is first
+    int arlo_first = get_arlo_first_offset();
+    
+    if (arlo_first == 0) {
+        update_kid_screen(kid1_container, &day->arlo, "Arlo", COLOR_ARLO, max_temp, precip, date_str);
+        update_kid_screen(kid2_container, &day->willow, "Willow", COLOR_WILLOW, max_temp, precip, date_str);
+    } else {
+        update_kid_screen(kid1_container, &day->willow, "Willow", COLOR_WILLOW, max_temp, precip, date_str);
+        update_kid_screen(kid2_container, &day->arlo, "Arlo", COLOR_ARLO, max_temp, precip, date_str);
     }
+    
+    update_parents_screen(date_str);
 }
 
 void morning_ui_update_weather(const WeatherData* weather) {
     current_weather = weather;
-    // Re-update displays with new weather
     morning_ui_update_feed(current_feed);
 }
 
@@ -175,6 +282,9 @@ void morning_ui_tick() {
     if (millis() - last_activity_ms > IDLE_TIMEOUT_MS) {
         if (current_screen != MORNING_SCREEN_CLAWD) {
             morning_ui_reset_to_clawd();
+        } else if (!morning_ui_should_be_on()) {
+            // Outside scheduled hours - sleep
+            screen_is_on = false;
         }
     }
 }
@@ -185,12 +295,11 @@ void morning_ui_check_schedule() {
     if (should_be_on && !screen_is_on) {
         // Auto wake
         screen_is_on = true;
-        // Turn on backlight via display HAL
+        // Backlight control handled in morning_main
     } else if (!should_be_on && screen_is_on) {
         // Auto sleep (unless recently touched)
         if (millis() - last_activity_ms > IDLE_TIMEOUT_MS) {
             screen_is_on = false;
-            // Turn off backlight via display HAL
         }
     }
 }
@@ -225,38 +334,123 @@ void morning_ui_reset_to_clawd() {
     morning_ui_show_screen(MORNING_SCREEN_CLAWD);
 }
 
+bool morning_ui_is_screen_on() {
+    return screen_is_on;
+}
+
 // Helper functions
 
 static void update_kid_screen(lv_obj_t* container, const KidDay* kid, 
-                              const char* name, uint32_t color,
-                              float max_temp, int precip_prob) {
-    // Clear existing content
+                              const char* name, lv_color_t color,
+                              float max_temp, int precip_prob, const char* date_str) {
     lv_obj_clean(container);
     
-    // Title bar with day/time
-    lv_obj_t* title = lv_label_create(container);
-    lv_label_set_text(title, "Monday 23 Nov");  // TODO: actual date
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+    // Top bar
+    lv_obj_t* top_bar = lv_obj_create(container);
+    lv_obj_set_size(top_bar, 440, 40);
+    lv_obj_align(top_bar, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(top_bar, COLOR_BG, 0);
+    lv_obj_set_style_border_width(top_bar, 0, 0);
+    lv_obj_set_style_pad_all(top_bar, 0, 0);
     
-    // Kid name (big, with accent color)
+    // Date
+    lv_obj_t* date_label = lv_label_create(top_bar);
+    lv_label_set_text(date_label, date_str);
+    lv_obj_set_style_text_font(date_label, &morning_font_20, 0);
+    lv_obj_align(date_label, LV_ALIGN_LEFT_MID, 0, 0);
+    
+    // Weather
+    char weather_str[32];
+    snprintf(weather_str, sizeof(weather_str), "%s %.0f%c", ICON_WEATHER, max_temp, 0xB0);
+    lv_obj_t* weather_label = lv_label_create(top_bar);
+    lv_label_set_text(weather_label, weather_str);
+    lv_obj_set_style_text_font(weather_label, &morning_font_16, 0);
+    lv_obj_align(weather_label, LV_ALIGN_RIGHT_MID, 0, 0);
+    
+    // Day dots (1 of 7)
+    lv_obj_t* dots = lv_obj_create(container);
+    lv_obj_set_size(dots, 100, 10);
+    lv_obj_align(dots, LV_ALIGN_TOP_MID, 0, 45);
+    lv_obj_set_style_bg_color(dots, COLOR_BG, 0);
+    lv_obj_set_style_border_width(dots, 0, 0);
+    lv_obj_set_style_pad_all(dots, 0, 0);
+    lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    
+    for (int i = 0; i < 7; i++) {
+        lv_obj_t* dot = lv_obj_create(dots);
+        lv_obj_set_size(dot, 8, 8);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(dot, 0, 0);
+        if (i == current_day_offset) {
+            lv_obj_set_style_bg_color(dot, COLOR_TEXT, 0);
+        } else {
+            lv_obj_set_style_bg_color(dot, COLOR_LIGHT_GRAY, 0);
+        }
+    }
+    
+    // Kid name
     lv_obj_t* name_label = lv_label_create(container);
     lv_label_set_text(name_label, name);
-    // lv_obj_set_style_text_font(name_label, &morning_font_48, 0);
-    lv_obj_set_style_text_color(name_label, lv_color_hex(color), 0);
-    lv_obj_align(name_label, LV_ALIGN_TOP_LEFT, 0, 40);
+    lv_obj_set_style_text_font(name_label, &morning_font_48, 0);
+    lv_obj_set_style_text_color(name_label, color, 0);
+    lv_obj_align(name_label, LV_ALIGN_TOP_LEFT, 0, 65);
     
-    // Items list (simplified - full version would iterate and format)
-    int y_pos = 100;
+    int y_pos = 125;
+    
+    // Tonight section (from 3pm)
+    if (should_show_tonight() && kid->tonight_count > 0) {
+        lv_obj_t* tonight_label = lv_label_create(container);
+        lv_label_set_text(tonight_label, "Tonight:");
+        lv_obj_set_style_text_font(tonight_label, &morning_font_20, 0);
+        lv_obj_set_style_text_color(tonight_label, color, 0);
+        lv_obj_align(tonight_label, LV_ALIGN_TOP_LEFT, 0, y_pos);
+        y_pos += 30;
+        
+        for (int i = 0; i < kid->tonight_count && i < 3; i++) {
+            lv_obj_t* item = lv_label_create(container);
+            char text[MAX_TEXT_LEN + 4];
+            snprintf(text, sizeof(text), "  %s", kid->tonight[i]);
+            lv_label_set_text(item, text);
+            lv_obj_set_style_text_font(item, &morning_font_16, 0);
+            lv_obj_align(item, LV_ALIGN_TOP_LEFT, 10, y_pos);
+            y_pos += 25;
+        }
+        y_pos += 10;
+    }
+    
+    // Items list
     if (kid->item_count == 0) {
         lv_obj_t* empty = lv_label_create(container);
-        lv_label_set_text(empty, "Nothing on today!");  // TODO: emoji support
+        lv_label_set_text(empty, "Nothing on today!");
+        lv_obj_set_style_text_font(empty, &morning_font_28, 0);
         lv_obj_align(empty, LV_ALIGN_TOP_LEFT, 0, y_pos);
     } else {
-        for (int i = 0; i < kid->item_count && i < 5; i++) {
-            lv_obj_t* item = lv_label_create(container);
-            lv_label_set_text(item, kid->items[i].text);
-            lv_obj_align(item, LV_ALIGN_TOP_LEFT, 0, y_pos);
-            y_pos += 35;
+        for (int i = 0; i < kid->item_count && i < 8 && y_pos < 380; i++) {
+            const Item* item = &kid->items[i];
+            
+            lv_obj_t* item_label = lv_label_create(container);
+            char text[MAX_TEXT_LEN + 20];
+            const char* icon = get_item_icon(item->type);
+            
+            if (item->type == ITEM_ACTION && item->deadline[0]) {
+                // Parse deadline and show day
+                struct tm tm_deadline = {0};
+                sscanf(item->deadline, "%d-%d-%d", &tm_deadline.tm_year, &tm_deadline.tm_mon, &tm_deadline.tm_mday);
+                tm_deadline.tm_year -= 1900;
+                tm_deadline.tm_mon -= 1;
+                mktime(&tm_deadline);
+                snprintf(text, sizeof(text), "%s %s (%s %d)", icon, item->text, get_day_name(tm_deadline.tm_wday), tm_deadline.tm_mday);
+            } else {
+                snprintf(text, sizeof(text), "%s %s", icon, item->text);
+            }
+            
+            lv_label_set_text(item_label, text);
+            lv_obj_set_style_text_font(item_label, &morning_font_20, 0);
+            lv_obj_set_width(item_label, 420);
+            lv_label_set_long_mode(item_label, LV_LABEL_LONG_WRAP);
+            lv_obj_align(item_label, LV_ALIGN_TOP_LEFT, 0, y_pos);
+            y_pos += 30;
         }
     }
     
@@ -270,7 +464,11 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
         else if (kid->uniform == UNIFORM_FORMAL) uniform_name = "Formal uniform";
         else if (kid->uniform == UNIFORM_MUFTI) uniform_name = "Mufti";
         
-        snprintf(dress_text, sizeof(dress_text), "%s", uniform_name);
+        if (precip_prob >= morning_config_get_dress_rules().rain_threshold) {
+            snprintf(dress_text, sizeof(dress_text), "%s + RAIN JACKET", uniform_name);
+        } else {
+            strlcpy(dress_text, uniform_name, sizeof(dress_text));
+        }
     } else {
         DressRules rules = morning_config_get_dress_rules();
         const char* clothes = "";
@@ -291,35 +489,84 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
     }
     
     lv_label_set_text(dress, dress_text);
+    lv_obj_set_style_text_font(dress, &morning_font_16, 0);
+    lv_obj_set_width(dress, 420);
+    lv_label_set_long_mode(dress, LV_LABEL_LONG_WRAP);
     lv_obj_align(dress, LV_ALIGN_BOTTOM_LEFT, 0, -10);
 }
 
-static void update_parents_screen() {
-    if (!current_feed || !current_feed->valid) return;
-    if (current_day_offset >= current_feed->day_count) return;
+static void update_parents_screen(const char* date_str) {
+    if (!current_feed || !current_feed->valid || current_day_offset >= current_feed->day_count) return;
     
     lv_obj_clean(parents_container);
     
     const DayData* day = &current_feed->days[current_day_offset];
     
+    // Top bar
+    lv_obj_t* top_bar = lv_obj_create(parents_container);
+    lv_obj_set_size(top_bar, 440, 40);
+    lv_obj_align(top_bar, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(top_bar, COLOR_BG, 0);
+    lv_obj_set_style_border_width(top_bar, 0, 0);
+    lv_obj_set_style_pad_all(top_bar, 0, 0);
+    
+    // Date
+    lv_obj_t* date_label = lv_label_create(top_bar);
+    lv_label_set_text(date_label, date_str);
+    lv_obj_set_style_text_font(date_label, &morning_font_20, 0);
+    lv_obj_align(date_label, LV_ALIGN_LEFT_MID, 0, 0);
+    
+    // Day dots
+    lv_obj_t* dots = lv_obj_create(parents_container);
+    lv_obj_set_size(dots, 100, 10);
+    lv_obj_align(dots, LV_ALIGN_TOP_MID, 0, 45);
+    lv_obj_set_style_bg_color(dots, COLOR_BG, 0);
+    lv_obj_set_style_border_width(dots, 0, 0);
+    lv_obj_set_style_pad_all(dots, 0, 0);
+    lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    
+    for (int i = 0; i < 7; i++) {
+        lv_obj_t* dot = lv_obj_create(dots);
+        lv_obj_set_size(dot, 8, 8);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(dot, 0, 0);
+        if (i == current_day_offset) {
+            lv_obj_set_style_bg_color(dot, COLOR_TEXT, 0);
+        } else {
+            lv_obj_set_style_bg_color(dot, COLOR_LIGHT_GRAY, 0);
+        }
+    }
+    
     // Title
     lv_obj_t* title = lv_label_create(parents_container);
     lv_label_set_text(title, "Parents");
-    lv_obj_set_style_text_color(title, lv_color_hex(COLOR_PARENT), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 40);
+    lv_obj_set_style_text_font(title, &morning_font_48, 0);
+    lv_obj_set_style_text_color(title, COLOR_PARENT, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 65);
     
     // Items
-    int y_pos = 100;
+    int y_pos = 125;
     if (day->parents.item_count == 0) {
         lv_obj_t* empty = lv_label_create(parents_container);
         lv_label_set_text(empty, "Nothing scheduled");
+        lv_obj_set_style_text_font(empty, &morning_font_28, 0);
         lv_obj_align(empty, LV_ALIGN_TOP_LEFT, 0, y_pos);
     } else {
-        for (int i = 0; i < day->parents.item_count && i < 10; i++) {
-            lv_obj_t* item = lv_label_create(parents_container);
-            lv_label_set_text(item, day->parents.items[i].text);
-            lv_obj_align(item, LV_ALIGN_TOP_LEFT, 0, y_pos);
-            y_pos += 35;
+        for (int i = 0; i < day->parents.item_count && i < 10 && y_pos < 440; i++) {
+            const Item* item = &day->parents.items[i];
+            lv_obj_t* item_label = lv_label_create(parents_container);
+            
+            char text[MAX_TEXT_LEN + 20];
+            const char* icon = get_item_icon(item->type);
+            snprintf(text, sizeof(text), "%s %s", icon, item->text);
+            
+            lv_label_set_text(item_label, text);
+            lv_obj_set_style_text_font(item_label, &morning_font_20, 0);
+            lv_obj_set_width(item_label, 420);
+            lv_label_set_long_mode(item_label, LV_LABEL_LONG_WRAP);
+            lv_obj_align(item_label, LV_ALIGN_TOP_LEFT, 0, y_pos);
+            y_pos += 30;
         }
     }
 }
@@ -327,6 +574,11 @@ static void update_parents_screen() {
 static const char* get_day_name(int day_of_week) {
     const char* names[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     return names[day_of_week % 7];
+}
+
+static const char* get_month_name(int month) {
+    const char* names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    return names[month % 12];
 }
 
 static bool should_show_tonight() {
@@ -338,7 +590,6 @@ static bool should_show_tonight() {
 }
 
 static int get_arlo_first_offset() {
-    // Alternates daily based on days since epoch
     time_t now;
     time(&now);
     struct tm epoch = {0};
@@ -350,4 +601,16 @@ static int get_arlo_first_offset() {
     int days_since = (now - epoch_time) / 86400;
     return days_since % 2;
 }
+
+static const char* get_item_icon(ItemType type) {
+    switch (type) {
+        case ITEM_EVENT:    return ICON_EVENT;
+        case ITEM_BRING:    return ICON_BRING;
+        case ITEM_ACTION:   return ICON_ACTION;
+        case ITEM_UNIFORM:  return ICON_UNIFORM;
+        case ITEM_ACTIVITY: return ICON_ACTIVITY;
+        default:            return "";
+    }
+}
+
 #endif  // BOARD_MORNING_BOARD

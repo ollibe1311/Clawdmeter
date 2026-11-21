@@ -2,32 +2,20 @@
 #include <lvgl.h>
 
 /*
- * Placeholder font declarations for Morning Board.
+ * Morning Board fonts - Atkinson Hyperlegible (OFL licensed, legible typeface)
+ * Generated with lv_font_conv from Google Fonts.
  * 
- * TODO: Generate proper Atkinson Hyperlegible or Andika fonts with lv_font_conv.
- * These fonts should include:
+ * Includes:
  * - Digits 0-9
  * - Basic Latin (A-Z, a-z, punctuation)
- * - Warning triangle: ⚠ (U+26A0)
- * - Party popper: 🎉 (U+1F389) or substitute icon
+ * - Degree sign (°, U+00B0)
  * 
- * Required sizes: 48px (names), 28px (items), 20px (details)
+ * Icons (warning, party) use LVGL symbols instead of Unicode chars.
  * 
- * Generation command (example):
- * lv_font_conv --font AtkinsonHyperlegible-Regular.ttf --size 48 \
- *   --range 0x20-0x7E,0x26A0 --format lvgl --bpp 4 \
- *   --no-compress -o morning_font_48.c
- * 
- * For now, we alias to existing Styrene fonts from Clawdmeter.
- * These fonts are Anthropic's proprietary Styrene fonts and must be
- * replaced with open fonts for distribution.
+ * Sizes: 48px (names), 28px (items), 20px (details), 16px (small text)
  */
 
-// Temporary aliases to existing fonts
-LV_FONT_DECLARE(font_styrene_48);
-LV_FONT_DECLARE(font_styrene_28);
-LV_FONT_DECLARE(font_styrene_20);
-
-#define morning_font_48 font_styrene_48
-#define morning_font_28 font_styrene_28
-#define morning_font_20 font_styrene_20
+LV_FONT_DECLARE(morning_font_48);
+LV_FONT_DECLARE(morning_font_28);
+LV_FONT_DECLARE(morning_font_20);
+LV_FONT_DECLARE(morning_font_16);

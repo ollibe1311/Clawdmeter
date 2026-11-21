@@ -36,3 +36,6 @@ void morning_ui_wake();
 
 // Return to Clawd after timeout
 void morning_ui_reset_to_clawd();
+
+// Check if screen is currently on
+bool morning_ui_is_screen_on();
