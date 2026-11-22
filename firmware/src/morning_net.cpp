@@ -32,6 +32,7 @@ static FeedData* cached_feed_p = nullptr;
 #define cached_feed (*cached_feed_p)
 static WeatherData cached_weather = {};
 static uint32_t last_feed_fetch = 0;
+static bool force_fetch = false;   // fetch right after a (re)connect
 static uint32_t last_weather_fetch = 0;
 
 static void (*feed_callback)(const FeedData*, bool) = nullptr;
@@ -214,6 +215,7 @@ void morning_net_tick() {
                     wifi_connected = true;
                     wifi_reconnect_index = 0;
                     Serial.printf("WiFi reconnected! IP: %s\n", WiFi.localIP().toString().c_str());
+                    force_fetch = true;  // don't wait 15/60 min for first data
                     
                     // Re-setup services
                     if (!time_synced) configTzTime(TZ_STRING, NTP_SERVER);
@@ -239,14 +241,15 @@ void morning_net_tick() {
         server.handleClient();
         
         // Periodic feed fetch (every 15 min when connected)
-        if (millis() - last_feed_fetch > FEED_INTERVAL_MS) {
+        if (force_fetch || millis() - last_feed_fetch > FEED_INTERVAL_MS) {
             morning_net_fetch_feed(nullptr);
         }
         
         // Periodic weather fetch (every 15 min when connected)
-        if (millis() - last_weather_fetch > WEATHER_INTERVAL_MS) {
+        if (force_fetch || millis() - last_weather_fetch > WEATHER_INTERVAL_MS) {
             morning_net_fetch_weather(nullptr);
         }
+        force_fetch = false;
     }
 }
 
@@ -469,7 +472,8 @@ static bool fetch_weather_sync(WeatherData* data) {
 
 void morning_net_fetch_feed(void (*callback)(const FeedData*, bool)) {
     last_feed_fetch = millis();
-    feed_callback = callback;
+    if (callback) feed_callback = callback;   // periodic calls pass nullptr: keep UI callback
+    callback = feed_callback;
     
     if (!morning_net_is_connected()) {
         if (callback) callback(&cached_feed, false);
@@ -485,7 +489,8 @@ void morning_net_fetch_feed(void (*callback)(const FeedData*, bool)) {
 
 void morning_net_fetch_weather(void (*callback)(const WeatherData*, bool)) {
     last_weather_fetch = millis();
-    weather_callback = callback;
+    if (callback) weather_callback = callback;
+    callback = weather_callback;
     
     if (!morning_net_is_connected()) {
         if (callback) callback(&cached_weather, false);

@@ -7,6 +7,8 @@
 #include "morning_fonts.h"
 #include "splash.h"
 #include "morning_weather_icons.h"
+#include "morning_item_icons.h"
+#include <ctype.h>
 #include <time.h>
 
 // Colors - warm off-white background, kid accents
@@ -17,14 +19,6 @@
 #define COLOR_PARENT     lv_color_hex(0xFF6A13)
 #define COLOR_LIGHT_GRAY lv_color_hex(0xCCCCCC)
 
-// LVGL symbols for icons
-#define ICON_EVENT     LV_SYMBOL_BELL      // LVGL 9 has no CALENDAR symbol
-#define ICON_BRING     LV_SYMBOL_HOME
-#define ICON_ACTION    LV_SYMBOL_WARNING
-#define ICON_UNIFORM   LV_SYMBOL_IMAGE
-#define ICON_ACTIVITY  LV_SYMBOL_PLAY
-#define ICON_WEATHER   ""                  // LVGL 9 has no CLOUD symbol
-#define ICON_PARTY     LV_SYMBOL_CHARGE
 
 static MorningScreen current_screen = MORNING_SCREEN_CLAWD;
 static int current_day_offset = 0;  // 0 = today, 1-6 = future days
@@ -68,7 +62,9 @@ static const char* get_day_name(int day_of_week);
 static const char* get_month_name(int month);
 static bool should_show_tonight();
 static int get_arlo_first_offset();
-static const char* get_item_icon(ItemType type);
+static const lv_image_dsc_t* get_item_icon(const Item* item);
+static int add_item_row(lv_obj_t* parent, const lv_image_dsc_t* icon, const char* text, int y);
+static int add_birthday_rows(lv_obj_t* parent, const DayData* day, int y);
 static const lv_image_dsc_t* get_weather_icon(int weathercode);
 static void handle_touch_event(lv_event_t* e);
 static void handle_clawd_tap(lv_event_t* e);
@@ -600,8 +596,13 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
         y_pos += 10;
     }
     
+    // Birthdays (cake) above the items
+    const DayData* bday_day = (current_feed && current_day_offset < current_feed->day_count)
+                              ? &current_feed->days[current_day_offset] : nullptr;
+    if (bday_day) y_pos = add_birthday_rows(container, bday_day, y_pos);
+
     // Items list
-    if (kid->item_count == 0) {
+    if (kid->item_count == 0 && !(bday_day && bday_day->birthday_count > 0)) {
         lv_obj_t* empty = lv_label_create(container);
         lv_label_set_text(empty, "Nothing on today!");
         lv_obj_set_style_text_font(empty, &morning_font_28, 0);
@@ -610,9 +611,7 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
         for (int i = 0; i < kid->item_count && i < 8 && y_pos < 380; i++) {
             const Item* item = &kid->items[i];
             
-            lv_obj_t* item_label = lv_label_create(container);
             char text[MAX_TEXT_LEN + 20];
-            const char* icon = get_item_icon(item->type);
             
             if (item->type == ITEM_ACTION && item->deadline[0]) {
                 // Parse deadline and show day
@@ -621,17 +620,11 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
                 tm_deadline.tm_year -= 1900;
                 tm_deadline.tm_mon -= 1;
                 mktime(&tm_deadline);
-                snprintf(text, sizeof(text), "%s %s (%s %d)", icon, item->text, get_day_name(tm_deadline.tm_wday), tm_deadline.tm_mday);
+                snprintf(text, sizeof(text), "%s (%s %d)", item->text, get_day_name(tm_deadline.tm_wday), tm_deadline.tm_mday);
             } else {
-                snprintf(text, sizeof(text), "%s %s", icon, item->text);
+                strlcpy(text, item->text, sizeof(text));
             }
-            
-            lv_label_set_text(item_label, text);
-            lv_obj_set_style_text_font(item_label, &morning_font_20, 0);
-            lv_obj_set_width(item_label, 420);
-            lv_label_set_long_mode(item_label, LV_LABEL_LONG_WRAP);
-            lv_obj_align(item_label, LV_ALIGN_TOP_LEFT, 0, y_pos);
-            y_pos += 30;
+            y_pos = add_item_row(container, get_item_icon(item), text, y_pos);
         }
     }
     
@@ -734,7 +727,8 @@ static void update_parents_screen(const char* date_str) {
     
     // Items
     int y_pos = 125;
-    if (day->parents.item_count == 0) {
+    y_pos = add_birthday_rows(parents_container, day, y_pos);
+    if (day->parents.item_count == 0 && day->birthday_count == 0) {
         lv_obj_t* empty = lv_label_create(parents_container);
         lv_label_set_text(empty, "Nothing scheduled");
         lv_obj_set_style_text_font(empty, &morning_font_28, 0);
@@ -742,18 +736,16 @@ static void update_parents_screen(const char* date_str) {
     } else {
         for (int i = 0; i < day->parents.item_count && i < 10 && y_pos < 440; i++) {
             const Item* item = &day->parents.items[i];
-            lv_obj_t* item_label = lv_label_create(parents_container);
-            
             char text[MAX_TEXT_LEN + 20];
-            const char* icon = get_item_icon(item->type);
-            snprintf(text, sizeof(text), "%s %s", icon, item->text);
-            
-            lv_label_set_text(item_label, text);
-            lv_obj_set_style_text_font(item_label, &morning_font_20, 0);
-            lv_obj_set_width(item_label, 420);
-            lv_label_set_long_mode(item_label, LV_LABEL_LONG_WRAP);
-            lv_obj_align(item_label, LV_ALIGN_TOP_LEFT, 0, y_pos);
-            y_pos += 30;
+            if (item->type == ITEM_ACTION && item->deadline[0]) {
+                struct tm td = {0};
+                sscanf(item->deadline, "%d-%d-%d", &td.tm_year, &td.tm_mon, &td.tm_mday);
+                td.tm_year -= 1900; td.tm_mon -= 1; mktime(&td);
+                snprintf(text, sizeof(text), "%s (%s %d)", item->text, get_day_name(td.tm_wday), td.tm_mday);
+            } else {
+                strlcpy(text, item->text, sizeof(text));
+            }
+            y_pos = add_item_row(parents_container, get_item_icon(item), text, y_pos);
         }
     }
 }
@@ -789,15 +781,73 @@ static int get_arlo_first_offset() {
     return days_since % 2;
 }
 
-static const char* get_item_icon(ItemType type) {
-    switch (type) {
-        case ITEM_EVENT:    return ICON_EVENT;
-        case ITEM_BRING:    return ICON_BRING;
-        case ITEM_ACTION:   return ICON_ACTION;
-        case ITEM_UNIFORM:  return ICON_UNIFORM;
-        case ITEM_ACTIVITY: return ICON_ACTIVITY;
-        default:            return "";
+// Case-insensitive whole-word-ish match: `w` must start at a word boundary.
+static bool has_word(const char* text, const char* w) {
+    size_t n = strlen(w);
+    for (const char* p = text; *p; p++) {
+        if ((p == text || !isalpha((unsigned char)p[-1])) && strncasecmp(p, w, n) == 0) return true;
     }
+    return false;
+}
+
+// Per-activity icon from the item text, or nullptr if nothing matches.
+static const lv_image_dsc_t* activity_icon_for_text(const char* t) {
+    if (has_word(t, "birthday")) return &mb_ic_cake;
+    if (has_word(t, "party")) return &mb_ic_balloon;
+    if (has_word(t, "sail")) return &mb_ic_sailboat;
+    if (has_word(t, "swim") || has_word(t, "surf")) return &mb_ic_wave;
+    if (has_word(t, "trombone") || has_word(t, "violin") || has_word(t, "piano") ||
+        has_word(t, "choir") || has_word(t, "music") || has_word(t, "ensemble") ||
+        has_word(t, "band")) return &mb_ic_note;
+    if (has_word(t, "art") || has_word(t, "paint") || has_word(t, "pottery") ||
+        has_word(t, "craft")) return &mb_ic_brush;
+    if (has_word(t, "dance") || has_word(t, "ballet")) return &mb_ic_shoe;
+    if (has_word(t, "football") || has_word(t, "soccer") || has_word(t, "footy") ||
+        has_word(t, "sport") || has_word(t, "netball")) return &mb_ic_ball;
+    return nullptr;
+}
+
+static const lv_image_dsc_t* get_item_icon(const Item* item) {
+    switch (item->type) {
+        case ITEM_BRING:   return &mb_ic_bag;
+        case ITEM_ACTION:  return &mb_ic_warning;
+        case ITEM_UNIFORM: return &mb_ic_shirt;
+        case ITEM_ACTIVITY: {
+            const lv_image_dsc_t* a = activity_icon_for_text(item->text);
+            return a ? a : &mb_ic_ball;
+        }
+        case ITEM_EVENT:
+        case ITEM_OTHER:
+        default: {
+            const lv_image_dsc_t* a = activity_icon_for_text(item->text);
+            return a ? a : &mb_ic_calendar;
+        }
+    }
+}
+
+// One item row: 24px icon + wrapped label. Returns the next y.
+static int add_item_row(lv_obj_t* parent, const lv_image_dsc_t* icon, const char* text, int y) {
+    lv_obj_t* img = lv_image_create(parent);
+    lv_image_set_src(img, icon);
+    lv_obj_align(img, LV_ALIGN_TOP_LEFT, 0, y + 1);
+    lv_obj_t* label = lv_label_create(parent);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, &morning_font_20, 0);
+    lv_obj_set_width(label, 388);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 32, y);
+    lv_obj_update_layout(label);
+    int h = lv_obj_get_height(label);
+    return y + (h + 6 > 30 ? h + 6 : 30);
+}
+
+static int add_birthday_rows(lv_obj_t* parent, const DayData* day, int y) {
+    for (int b = 0; b < day->birthday_count && b < MAX_BIRTHDAYS; b++) {
+        char text[MAX_NAME_LEN + 16];
+        snprintf(text, sizeof(text), "%s's birthday", day->birthdays[b]);
+        y = add_item_row(parent, &mb_ic_cake, text, y);
+    }
+    return y;
 }
 
 static const lv_image_dsc_t* get_weather_icon(int weathercode) {

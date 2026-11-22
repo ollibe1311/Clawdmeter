@@ -138,6 +138,10 @@ void setup() {
         morning_net_fetch_feed(on_feed_update);
         morning_net_fetch_weather(on_weather_update);
     } else {
+        // Register the UI callbacks now (these return immediately when offline)
+        // so fetches after a later reconnect still refresh the screen.
+        morning_net_fetch_feed(on_feed_update);
+        morning_net_fetch_weather(on_weather_update);
         // Load cached data
         morning_ui_update_feed(morning_net_get_cached_feed());
         morning_ui_update_weather(morning_net_get_cached_weather());
