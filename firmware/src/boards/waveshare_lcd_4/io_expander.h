@@ -7,4 +7,5 @@
 
 void io_expander_init(void);
 void io_expander_set_backlight(bool on);
+void io_expander_set_brightness(uint8_t level);  // 0-255, CH32 PWM on Rev4
 uint8_t io_expander_addr(void);  // 0 if probe failed

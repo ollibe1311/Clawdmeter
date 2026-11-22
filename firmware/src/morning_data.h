@@ -84,6 +84,7 @@ struct WeatherData {
     float max_temp[7];
     float min_temp[7];
     int precip_prob[7];  // percentage
+    int weathercode[7];  // WMO weather code (0-99)
     bool valid;
     uint32_t fetched_at;  // millis() when last fetched
 };

@@ -26,5 +26,8 @@ const WeatherData* morning_net_get_cached_weather();
 // Check if we're in a provisioning window (first 5s after boot or config missing)
 bool morning_net_in_provision_window();
 
+// Check if WiFi is configured (credentials exist)
+bool morning_net_is_wifi_configured();
+
 // Process serial provisioning commands
 void morning_net_process_serial();

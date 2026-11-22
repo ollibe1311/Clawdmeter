@@ -56,6 +56,7 @@ static const char* get_month_name(int month);
 static bool should_show_tonight();
 static int get_arlo_first_offset();
 static const char* get_item_icon(ItemType type);
+static const char* get_weather_icon(int weathercode);
 static void handle_touch_event(lv_event_t* e);
 static void handle_clawd_tap(lv_event_t* e);
 
@@ -384,31 +385,40 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
     lv_obj_set_style_text_font(date_label, &morning_font_20, 0);
     lv_obj_align(date_label, LV_ALIGN_LEFT_MID, 0, 0);
     
-    // Weather
-    char weather_str[32];
-    snprintf(weather_str, sizeof(weather_str), "%s%.0f\xC2\xB0", ICON_WEATHER, max_temp);  // UTF-8 degree sign
+    // Weather - show icon + min/max temps for selected day
+    char weather_str[48];
+    float min_temp = (current_weather && current_weather->valid && current_day_offset < 7) ? 
+                     current_weather->min_temp[current_day_offset] : 15.0f;
+    int weathercode = (current_weather && current_weather->valid && current_day_offset < 7) ?
+                      current_weather->weathercode[current_day_offset] : 1;
+    const char* w_icon = get_weather_icon(weathercode);
+    snprintf(weather_str, sizeof(weather_str), "%s %.0f\xC2\xB0 / %.0f\xC2\xB0", 
+             w_icon, min_temp, max_temp);
     lv_obj_t* weather_label = lv_label_create(top_bar);
     lv_label_set_text(weather_label, weather_str);
     lv_obj_set_style_text_font(weather_label, &morning_font_16, 0);
     lv_obj_align(weather_label, LV_ALIGN_RIGHT_MID, 0, 0);
     
-    // Day dots (1 of 7)
+    // Day dots (1 of 7) - fixed to fit all 7 dots properly
     lv_obj_t* dots = lv_obj_create(container);
-    lv_obj_clear_flag(dots, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
-    lv_obj_set_size(dots, 100, 10);
+    lv_obj_clear_flag(dots, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_set_size(dots, 130, 12);  // Wider to ensure all 7 dots fit
     lv_obj_align(dots, LV_ALIGN_TOP_MID, 0, 45);
     lv_obj_set_style_bg_color(dots, COLOR_BG, 0);
     lv_obj_set_style_border_width(dots, 0, 0);
-    lv_obj_set_style_pad_all(dots, 0, 0);
+    lv_obj_set_style_pad_all(dots, 2, 0);
     lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     
     for (int i = 0; i < 7; i++) {
         lv_obj_t* dot = lv_obj_create(dots);
-        lv_obj_clear_flag(dot, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
+        lv_obj_clear_flag(dot, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
         lv_obj_set_size(dot, 8, 8);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_border_width(dot, 0, 0);
+        lv_obj_set_style_pad_all(dot, 0, 0);
+        lv_obj_set_style_margin_left(dot, 1, 0);
+        lv_obj_set_style_margin_right(dot, 1, 0);
         if (i == current_day_offset) {
             lv_obj_set_style_bg_color(dot, COLOR_TEXT, 0);
         } else {
@@ -544,23 +554,26 @@ static void update_parents_screen(const char* date_str) {
     lv_obj_set_style_text_font(date_label, &morning_font_20, 0);
     lv_obj_align(date_label, LV_ALIGN_LEFT_MID, 0, 0);
     
-    // Day dots
+    // Day dots (1 of 7) - fixed to fit all 7 dots properly
     lv_obj_t* dots = lv_obj_create(parents_container);
-    lv_obj_clear_flag(dots, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
-    lv_obj_set_size(dots, 100, 10);
+    lv_obj_clear_flag(dots, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_set_size(dots, 130, 12);  // Wider to ensure all 7 dots fit
     lv_obj_align(dots, LV_ALIGN_TOP_MID, 0, 45);
     lv_obj_set_style_bg_color(dots, COLOR_BG, 0);
     lv_obj_set_style_border_width(dots, 0, 0);
-    lv_obj_set_style_pad_all(dots, 0, 0);
+    lv_obj_set_style_pad_all(dots, 2, 0);
     lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     
     for (int i = 0; i < 7; i++) {
         lv_obj_t* dot = lv_obj_create(dots);
-        lv_obj_clear_flag(dot, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));  // let touches reach the page for swipes
+        lv_obj_clear_flag(dot, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
         lv_obj_set_size(dot, 8, 8);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_border_width(dot, 0, 0);
+        lv_obj_set_style_pad_all(dot, 0, 0);
+        lv_obj_set_style_margin_left(dot, 1, 0);
+        lv_obj_set_style_margin_right(dot, 1, 0);
         if (i == current_day_offset) {
             lv_obj_set_style_bg_color(dot, COLOR_TEXT, 0);
         } else {
@@ -641,6 +654,32 @@ static const char* get_item_icon(ItemType type) {
         case ITEM_ACTIVITY: return ICON_ACTIVITY;
         default:            return "";
     }
+}
+
+static const char* get_weather_icon(int weathercode) {
+    // WMO Weather interpretation codes (WW)
+    // https://open-meteo.com/en/docs
+    // 0: Clear sky
+    // 1-3: Mainly clear, partly cloudy, overcast
+    // 45,48: Fog
+    // 51-67: Rain (various intensities)
+    // 71-86: Snow
+    // 95-99: Thunderstorm
+    
+    if (weathercode == 0 || weathercode == 1) {
+        return LV_SYMBOL_DUMMY;  // Sun (use dummy for clear, or a custom glyph)
+    } else if (weathercode == 2) {
+        return LV_SYMBOL_DUMMY;  // Partly cloudy
+    } else if (weathercode == 3 || weathercode == 45 || weathercode == 48) {
+        return LV_SYMBOL_DUMMY;  // Cloud
+    } else if ((weathercode >= 51 && weathercode <= 67) || (weathercode >= 80 && weathercode <= 82)) {
+        return LV_SYMBOL_DOWNLOAD;  // Rain (use download arrow as rain)
+    } else if (weathercode >= 71 && weathercode <= 77) {
+        return "*";  // Snow
+    } else if (weathercode >= 95) {
+        return LV_SYMBOL_WARNING;  // Storm
+    }
+    return "";  // Default
 }
 
 #endif  // BOARD_MORNING_BOARD

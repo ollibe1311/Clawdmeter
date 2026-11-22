@@ -15,6 +15,7 @@
 #include "hal/touch_hal.h"
 #include "hal/input_hal.h"
 #include "hal/power_hal.h"
+#include "boards/waveshare_lcd_4/io_expander.h"  // For backlight control
 
 // LVGL setup
 #define BUF_LINES 40
@@ -117,17 +118,19 @@ void setup() {
     // Initialize UI
     morning_ui_init();
     
-    // Show provisioning status
-    if (morning_net_in_provision_window()) {
+    // Show provisioning status only if WiFi not configured
+    if (!morning_net_is_wifi_configured()) {
         Serial.println("\n*** PROVISIONING MODE ***");
-        Serial.println("Send these commands over serial (115200 baud):");
+        Serial.println("WiFi not configured. Send these commands over serial (115200 baud):");
         Serial.println("  SET WIFI_SSID=<your wifi name>");
         Serial.println("  SET WIFI_PASS=<your wifi password>");
         Serial.println("  SET FEED_URL=<your feed JSON URL>");
         Serial.println("  SHOW");
         Serial.println("  REBOOT");
-        Serial.println("Provisioning window: first 5 seconds or until configured.");
+        Serial.println("Provisioning window: first 5 seconds after boot.");
         Serial.println("***\n");
+    } else if (morning_net_in_provision_window()) {
+        Serial.println("Provisioning window active (5 seconds). Send STATUS to check config.");
     }
     
     // Initial fetch if connected
@@ -147,6 +150,7 @@ void setup() {
 
 static uint32_t last_schedule_check = 0;
 static uint32_t last_fetch_check = 0;
+static bool backlight_on = true;
 
 void loop() {
     lv_timer_handler();
@@ -160,10 +164,26 @@ void loop() {
     // so WIFI_PASS / FEED_URL / REBOOT that followed were silently dropped.
     morning_net_process_serial();
     
-    // Check screen schedule every 10 seconds
+    // Check screen schedule every 10 seconds and control backlight
     if (millis() - last_schedule_check > 10000) {
         last_schedule_check = millis();
         morning_ui_check_schedule();
+        
+        // Screen scheduling: on 6-9am and 3-8:30pm, off after 2 min idle otherwise
+        bool should_be_on = morning_ui_should_be_on();
+        bool screen_on = morning_ui_is_screen_on();
+        
+        if (should_be_on && !backlight_on) {
+            // Turn on backlight (CH32V003 PWM on Rev4)
+            io_expander_set_brightness(255);
+            backlight_on = true;
+            Serial.println("Screen schedule: backlight ON");
+        } else if (!should_be_on && backlight_on && !screen_on) {
+            // Turn off backlight when screen is idle and outside scheduled hours
+            io_expander_set_brightness(0);
+            backlight_on = false;
+            Serial.println("Screen schedule: backlight OFF");
+        }
     }
     
     // Periodic data refresh check (networking module handles timing)

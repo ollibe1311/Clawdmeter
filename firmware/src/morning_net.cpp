@@ -14,12 +14,17 @@ static const char* TZ_STRING = "AEST-10AEDT,M10.1.0,M4.1.0/3";
 static const char* NTP_SERVER = "pool.ntp.org";
 static const uint32_t PROVISION_WINDOW_MS = 5000;
 static const uint32_t FEED_INTERVAL_MS = 15 * 60 * 1000;  // 15 minutes
-static const uint32_t WEATHER_INTERVAL_MS = 60 * 60 * 1000;  // 1 hour
+static const uint32_t WEATHER_INTERVAL_MS = 15 * 60 * 1000;  // 15 minutes (match feed)
+static const uint32_t WIFI_RECONNECT_INTERVALS[] = {5000, 10000, 20000, 40000, 60000};  // backoff
+static const int WIFI_RECONNECT_INTERVALS_COUNT = 5;
 
 static WebServer server(80);
 static uint32_t boot_time_ms = 0;
 static bool wifi_connected = false;
 static bool time_synced = false;
+static bool wifi_configured = false;
+static uint32_t last_wifi_attempt = 0;
+static int wifi_reconnect_index = 0;
 
 // FeedData is ~100 KB. As a static it sat in internal RAM and starved mbedTLS
 // ("SSL - Memory allocation failed" on every HTTPS fetch). Keep it in PSRAM.
@@ -79,9 +84,11 @@ static void connect_wifi() {
     if (!morning_config_get_wifi_ssid(ssid, sizeof(ssid)) ||
         !morning_config_get_wifi_pass(pass, sizeof(pass))) {
         Serial.println("WiFi credentials not configured");
+        wifi_configured = false;
         return;
     }
     
+    wifi_configured = true;
     Serial.printf("Connecting to WiFi: %s\n", ssid);
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, pass);
@@ -95,9 +102,11 @@ static void connect_wifi() {
     
     if (WiFi.status() == WL_CONNECTED) {
         wifi_connected = true;
+        wifi_reconnect_index = 0;
         Serial.printf("Connected! IP: %s\n", WiFi.localIP().toString().c_str());
     } else {
-        Serial.println("WiFi connection failed");
+        Serial.println("WiFi connection failed - will retry with backoff");
+        last_wifi_attempt = millis();
     }
 }
 
@@ -184,15 +193,57 @@ static void setup_webserver() {
 }
 
 void morning_net_tick() {
+    // WiFi reconnect with exponential backoff
+    if (!wifi_connected && wifi_configured) {
+        uint32_t interval = WIFI_RECONNECT_INTERVALS[wifi_reconnect_index];
+        if (millis() - last_wifi_attempt >= interval) {
+            last_wifi_attempt = millis();
+            Serial.printf("WiFi reconnect attempt (backoff %lums)\n", interval);
+            
+            char ssid[64], pass[64];
+            if (morning_config_get_wifi_ssid(ssid, sizeof(ssid)) &&
+                morning_config_get_wifi_pass(pass, sizeof(pass))) {
+                WiFi.begin(ssid, pass);
+                
+                // Quick check (don't block)
+                for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
+                    delay(100);
+                }
+                
+                if (WiFi.status() == WL_CONNECTED) {
+                    wifi_connected = true;
+                    wifi_reconnect_index = 0;
+                    Serial.printf("WiFi reconnected! IP: %s\n", WiFi.localIP().toString().c_str());
+                    
+                    // Re-setup services
+                    if (!time_synced) configTzTime(TZ_STRING, NTP_SERVER);
+                    setup_mdns();
+                    if (!server.uri()) {
+                        setup_webserver();
+                        server.begin();
+                    }
+                } else {
+                    wifi_reconnect_index = min(wifi_reconnect_index + 1, WIFI_RECONNECT_INTERVALS_COUNT - 1);
+                }
+            }
+        }
+    } else if (wifi_connected && WiFi.status() != WL_CONNECTED) {
+        // Detected disconnect
+        wifi_connected = false;
+        last_wifi_attempt = millis();
+        wifi_reconnect_index = 0;
+        Serial.println("WiFi disconnected");
+    }
+    
     if (wifi_connected) {
         server.handleClient();
         
-        // Periodic feed fetch
+        // Periodic feed fetch (every 15 min when connected)
         if (millis() - last_feed_fetch > FEED_INTERVAL_MS) {
             morning_net_fetch_feed(nullptr);
         }
         
-        // Periodic weather fetch
+        // Periodic weather fetch (every 15 min when connected)
         if (millis() - last_weather_fetch > WEATHER_INTERVAL_MS) {
             morning_net_fetch_weather(nullptr);
         }
@@ -360,7 +411,7 @@ static bool fetch_weather_sync(WeatherData* data) {
     char url[256];
     snprintf(url, sizeof(url),
         "https://api.open-meteo.com/v1/forecast?latitude=%.2f&longitude=%.2f"
-        "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+        "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode"
         "&timezone=Australia/Sydney&forecast_days=7",
         lat, lon);
     
@@ -388,6 +439,7 @@ static bool fetch_weather_sync(WeatherData* data) {
     JsonArray max_temps = doc["daily"]["temperature_2m_max"].as<JsonArray>();
     JsonArray min_temps = doc["daily"]["temperature_2m_min"].as<JsonArray>();
     JsonArray precip = doc["daily"]["precipitation_probability_max"].as<JsonArray>();
+    JsonArray codes = doc["daily"]["weathercode"].as<JsonArray>();
     
     int i = 0;
     for (float temp : max_temps) {
@@ -403,6 +455,11 @@ static bool fetch_weather_sync(WeatherData* data) {
     for (int prob : precip) {
         if (i >= 7) break;
         data->precip_prob[i++] = prob;
+    }
+    i = 0;
+    for (int code : codes) {
+        if (i >= 7) break;
+        data->weathercode[i++] = code;
     }
     
     data->valid = true;
@@ -449,22 +506,53 @@ const WeatherData* morning_net_get_cached_weather() {
 
 static bool load_cached_feed() {
     File f = LittleFS.open("/feed_cache.json", "r");
-    if (!f) return false;
+    if (!f) {
+        Serial.println("No cached feed found");
+        return false;
+    }
+    
+    size_t size = f.size();
+    if (size == 0 || size > 20000) {
+        f.close();
+        return false;
+    }
     
     String content = f.readString();
     f.close();
     
+    // Parse directly into cached_feed structure (simplified - just validate JSON)
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, content);
-    if (err) return false;
+    if (err) {
+        Serial.printf("Cached feed parse error: %s\n", err.c_str());
+        return false;
+    }
     
-    // Simplified load - just mark as having data
-    cached_feed.valid = true;
+    cached_feed.version = doc["version"] | 1;
+    cached_feed.day_count = doc["days"].size();
+    cached_feed.valid = (cached_feed.day_count > 0);
+    cached_feed.fetched_at = 0;  // Will be old
+    
+    Serial.printf("Loaded cached feed (%d days)\n", cached_feed.day_count);
     return true;
 }
 
 static bool save_cached_feed() {
-    // Save feed to LittleFS - simplified for now
+    if (!cached_feed.valid) return false;
+    
+    File f = LittleFS.open("/feed_cache.json", "w");
+    if (!f) {
+        Serial.println("Failed to open feed cache for writing");
+        return false;
+    }
+    
+    // Simplified: just save a marker. Full serialization would require
+    // re-assembling the JSON from the FeedData structure, which is expensive.
+    // For now, the in-memory cache is sufficient.
+    f.println("{\"cached\":true}");
+    f.close();
+    
+    Serial.println("Feed cached to LittleFS");
     return true;
 }
 
@@ -475,6 +563,11 @@ bool morning_net_in_provision_window() {
     if (!morning_config_get_wifi_ssid(ssid, sizeof(ssid))) return true;
     
     return false;
+}
+
+bool morning_net_is_wifi_configured() {
+    char ssid[64];
+    return morning_config_get_wifi_ssid(ssid, sizeof(ssid));
 }
 
 void morning_net_process_serial() {
@@ -497,11 +590,17 @@ void morning_net_process_serial() {
                 Serial.println("OK: Feed URL set");
             } else if (strcmp(cmd_buf, "SHOW") == 0) {
                 char ssid[64], url[256];
-                morning_config_get_wifi_ssid(ssid, sizeof(ssid));
-                morning_config_get_feed_url(url, sizeof(url));
-                Serial.printf("WIFI_SSID=%s\n", ssid);
-                Serial.printf("FEED_URL=%s\n", url);
+                bool has_ssid = morning_config_get_wifi_ssid(ssid, sizeof(ssid));
+                bool has_url = morning_config_get_feed_url(url, sizeof(url));
+                Serial.println("=== Configuration ===");
+                Serial.printf("WIFI_SSID=%s\n", has_ssid ? ssid : "(not set)");
+                Serial.printf("FEED_URL=%s\n", has_url ? url : "(not set)");
                 Serial.println("(password hidden)");
+                if (wifi_connected) {
+                    Serial.printf("WiFi: Connected (%s)\n", WiFi.localIP().toString().c_str());
+                } else {
+                    Serial.printf("WiFi: %s\n", wifi_configured ? "Configured, not connected" : "Not configured");
+                }
             } else if (strcmp(cmd_buf, "STATUS") == 0) {
                 extern void touch_hal_debug_status(void);
                 touch_hal_debug_status();

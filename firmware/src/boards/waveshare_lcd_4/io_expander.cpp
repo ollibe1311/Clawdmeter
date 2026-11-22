@@ -96,12 +96,28 @@ void io_expander_init(void) {
 }
 
 void io_expander_set_backlight(bool on) {
-    // Rev4 backlight is the CH32's PWM channel, not an EXIO bit; EXIO2 there
-    // is touch INT, so leave the latch alone on the CH32.
-    if (is_ch32) return;
+    // Rev4 backlight is the CH32's PWM channel (register 0x05), not an EXIO bit.
+    // EXIO2 on Rev4 is touch INT, so leave the latch alone on the CH32.
+    // For boolean on/off, use full brightness (255) or off (0).
+    if (is_ch32) {
+        io_expander_set_brightness(on ? 255 : 0);
+        return;
+    }
     if (on) output_latch |= (1u << IOX_PIN_BACKLIGHT);
     else    output_latch &= ~(1u << IOX_PIN_BACKLIGHT);
     iox_commit_output();
+}
+
+void io_expander_set_brightness(uint8_t level) {
+    // CH32V003 Rev4: register 0x05 is backlight PWM (0-255).
+    // Reference: Waveshare ESP32-S3-Touch-LCD-4 Rev4.0 schematic and
+    // CH32V003 firmware implementation at I2C address 0x24.
+    // TCA9554 (pre-Rev4): no PWM, treat as on/off at EXIO2.
+    if (is_ch32) {
+        iox_write(0x05, level);
+    } else {
+        io_expander_set_backlight(level > 0);
+    }
 }
 
 uint8_t io_expander_addr(void) { return expander_addr; }
