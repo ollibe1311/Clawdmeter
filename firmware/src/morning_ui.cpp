@@ -6,6 +6,7 @@
 #include "morning_config.h"
 #include "morning_fonts.h"
 #include "splash.h"
+#include "morning_weather_icons.h"
 #include <time.h>
 
 // Colors - warm off-white background, kid accents
@@ -38,6 +39,18 @@ static lv_obj_t* kid1_container = nullptr;
 static lv_obj_t* kid2_container = nullptr;
 static lv_obj_t* parents_container = nullptr;
 
+// Slide animations (container x/y on the one screen; no extra screens to leak)
+#define SLIDE_MS 250
+static bool anim_busy = false;
+static lv_obj_t* slide_old = nullptr;
+static int slide_day_dir = 0;
+static void anim_set_x(void* obj, int32_t v) { lv_obj_set_x((lv_obj_t*)obj, v); }
+static void anim_set_y(void* obj, int32_t v) { lv_obj_set_y((lv_obj_t*)obj, v); }
+static lv_obj_t* container_for(MorningScreen s);
+static void stop_slides();
+static void slide_to_page(MorningScreen to, int dir);
+static void slide_day(int dir);
+
 // Swipe gesture tracking
 static lv_point_t swipe_start = {0, 0};
 static bool swipe_active = false;
@@ -56,13 +69,17 @@ static const char* get_month_name(int month);
 static bool should_show_tonight();
 static int get_arlo_first_offset();
 static const char* get_item_icon(ItemType type);
-static const char* get_weather_icon(int weathercode);
+static const lv_image_dsc_t* get_weather_icon(int weathercode);
 static void handle_touch_event(lv_event_t* e);
 static void handle_clawd_tap(lv_event_t* e);
 
 void morning_ui_init() {
     lv_obj_t* screen = lv_scr_act();
     lv_obj_set_style_bg_color(screen, COLOR_BG, 0);
+    // Pages slide off-screen during animations; keep the screen itself from
+    // becoming scrollable (or showing scrollbars) while they are out of bounds.
+    lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(screen, LV_SCROLLBAR_MODE_OFF);
     
     // Create all screen containers (hidden by default)
     create_clawd_screen();
@@ -161,6 +178,8 @@ static void handle_touch_event(lv_event_t* e) {
             swipe_start = point;
             swipe_active = true;
         }
+    } else if (code == LV_EVENT_RELEASED && swipe_active && anim_busy) {
+        swipe_active = false;   // ignore gestures while a slide is running
     } else if (code == LV_EVENT_RELEASED && swipe_active) {
         int dx = point.x - swipe_start.x;
         int dy = point.y - swipe_start.y;
@@ -179,16 +198,10 @@ static void handle_touch_event(lv_event_t* e) {
             // Horizontal swipe - change day
             if (dx > 0) {
                 // Swipe right - previous day
-                if (current_day_offset > 0) {
-                    current_day_offset--;
-                    morning_ui_update_feed(current_feed);
-                }
+                if (current_day_offset > 0) slide_day(-1);
             } else {
                 // Swipe left - next day
-                if (current_day_offset < 6) {
-                    current_day_offset++;
-                    morning_ui_update_feed(current_feed);
-                }
+                if (current_day_offset < 6) slide_day(+1);
             }
         } else if (abs(dy) > abs(dx) && abs(dy) > SWIPE_THRESHOLD) {
             // Vertical swipe - change page
@@ -196,10 +209,10 @@ static void handle_touch_event(lv_event_t* e) {
                 // Swipe down - previous page
                 switch (current_screen) {
                     case MORNING_SCREEN_KID2:
-                        morning_ui_show_screen(MORNING_SCREEN_KID1);
+                        slide_to_page(MORNING_SCREEN_KID1, -1);
                         break;
                     case MORNING_SCREEN_PARENTS:
-                        morning_ui_show_screen(MORNING_SCREEN_KID2);
+                        slide_to_page(MORNING_SCREEN_KID2, -1);
                         break;
                     default:
                         break;
@@ -208,10 +221,10 @@ static void handle_touch_event(lv_event_t* e) {
                 // Swipe up - next page
                 switch (current_screen) {
                     case MORNING_SCREEN_KID1:
-                        morning_ui_show_screen(MORNING_SCREEN_KID2);
+                        slide_to_page(MORNING_SCREEN_KID2, +1);
                         break;
                     case MORNING_SCREEN_KID2:
-                        morning_ui_show_screen(MORNING_SCREEN_PARENTS);
+                        slide_to_page(MORNING_SCREEN_PARENTS, +1);
                         break;
                     default:
                         break;
@@ -224,6 +237,7 @@ static void handle_touch_event(lv_event_t* e) {
 }
 
 void morning_ui_show_screen(MorningScreen screen) {
+    stop_slides();
     // Hide all
     if (screen != MORNING_SCREEN_CLAWD) splash_hide();
     if (clawd_container) lv_obj_add_flag(clawd_container, LV_OBJ_FLAG_HIDDEN);
@@ -354,6 +368,104 @@ void morning_ui_wake() {
     last_activity_ms = millis();
 }
 
+static lv_obj_t* container_for(MorningScreen s) {
+    switch (s) {
+        case MORNING_SCREEN_CLAWD:   return clawd_container;
+        case MORNING_SCREEN_KID1:    return kid1_container;
+        case MORNING_SCREEN_KID2:    return kid2_container;
+        case MORNING_SCREEN_PARENTS: return parents_container;
+    }
+    return nullptr;
+}
+
+static void stop_slides() {
+    lv_obj_t* all[] = {clawd_container, kid1_container, kid2_container, parents_container};
+    for (lv_obj_t* c : all) {
+        if (!c) continue;
+        lv_anim_delete(c, anim_set_x);
+        lv_anim_delete(c, anim_set_y);
+        lv_obj_set_pos(c, 0, 0);
+    }
+    slide_old = nullptr;
+    slide_day_dir = 0;
+    anim_busy = false;
+}
+
+static void start_anim(lv_obj_t* obj, lv_anim_exec_xcb_t cb, int32_t from, int32_t to,
+                       lv_anim_completed_cb_t done) {
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, obj);
+    lv_anim_set_exec_cb(&a, cb);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_duration(&a, SLIDE_MS);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    if (done) lv_anim_set_completed_cb(&a, done);
+    lv_anim_start(&a);
+}
+
+static void page_slide_done(lv_anim_t* a) {
+    (void)a;
+    if (slide_old) {
+        lv_obj_add_flag(slide_old, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_pos(slide_old, 0, 0);
+        slide_old = nullptr;
+    }
+    anim_busy = false;
+}
+
+// Vertical page change: dir +1 = next page comes up from below.
+static void slide_to_page(MorningScreen to, int dir) {
+    lv_obj_t* from_c = container_for(current_screen);
+    lv_obj_t* to_c = container_for(to);
+    if (!from_c || !to_c || from_c == to_c || anim_busy) {
+        morning_ui_show_screen(to);
+        return;
+    }
+    anim_busy = true;
+    slide_old = from_c;
+    current_screen = to;
+    last_activity_ms = millis();
+    lv_obj_set_pos(to_c, 0, dir * 480);
+    lv_obj_clear_flag(to_c, LV_OBJ_FLAG_HIDDEN);
+    start_anim(from_c, anim_set_y, 0, -dir * 480, nullptr);
+    start_anim(to_c, anim_set_y, dir * 480, 0, page_slide_done);
+}
+
+static void day_slide_in_done(lv_anim_t* a) { (void)a; anim_busy = false; }
+
+static void day_slide_out_done(lv_anim_t* a) {
+    lv_obj_t* c = (lv_obj_t*)a->var;
+    int dir = slide_day_dir;
+    slide_day_dir = 0;
+    current_day_offset += dir;
+    morning_ui_update_feed(current_feed);       // rebuilds page contents
+    lv_obj_set_x(c, dir * 480);
+    start_anim(c, anim_set_x, dir * 480, 0, day_slide_in_done);
+}
+
+// Horizontal day change: dir +1 = next day (content moves left).
+static void slide_day(int dir) {
+    lv_obj_t* c = container_for(current_screen);
+    if (!c || anim_busy || current_screen == MORNING_SCREEN_CLAWD) {
+        current_day_offset += dir;
+        morning_ui_update_feed(current_feed);
+        return;
+    }
+    anim_busy = true;
+    slide_day_dir = dir;
+    last_activity_ms = millis();
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, c);
+    lv_anim_set_exec_cb(&a, anim_set_x);
+    lv_anim_set_values(&a, 0, -dir * 480);
+    lv_anim_set_duration(&a, SLIDE_MS / 2);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_completed_cb(&a, day_slide_out_done);
+    lv_anim_start(&a);
+}
+
 void morning_ui_reset_to_clawd() {
     current_day_offset = 0;
     morning_ui_show_screen(MORNING_SCREEN_CLAWD);
@@ -419,13 +531,17 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
                      current_weather->min_temp[current_day_offset] : 15.0f;
     int weathercode = (current_weather && current_weather->valid && current_day_offset < 7) ?
                       current_weather->weathercode[current_day_offset] : 1;
-    const char* w_icon = get_weather_icon(weathercode);
-    snprintf(weather_str, sizeof(weather_str), "%s %.0f\xC2\xB0 / %.0f\xC2\xB0", 
-             w_icon, min_temp, max_temp);
+    snprintf(weather_str, sizeof(weather_str), "%.0f\xC2\xB0 / %.0f\xC2\xB0",
+             min_temp, max_temp);
     lv_obj_t* weather_label = lv_label_create(top_bar);
     lv_label_set_text(weather_label, weather_str);
     lv_obj_set_style_text_font(weather_label, &morning_font_16, 0);
     lv_obj_align(weather_label, LV_ALIGN_RIGHT_MID, 0, 0);
+    // 28px pixel-art weather icon left of the temps (fonts have no weather glyphs)
+    lv_obj_t* w_img = lv_image_create(top_bar);
+    lv_image_set_src(w_img, get_weather_icon(weathercode));
+    lv_obj_update_layout(weather_label);
+    lv_obj_align_to(w_img, weather_label, LV_ALIGN_OUT_LEFT_MID, -6, 0);
     
     // Day dots (1 of 7) - fixed to fit all 7 dots properly
     lv_obj_t* dots = lv_obj_create(container);
@@ -611,7 +727,7 @@ static void update_parents_screen(const char* date_str) {
     
     // Title
     lv_obj_t* title = lv_label_create(parents_container);
-    lv_label_set_text(title, "Parents");
+    lv_label_set_text(title, "Amy and Olli");
     lv_obj_set_style_text_font(title, &morning_font_48, 0);
     lv_obj_set_style_text_color(title, COLOR_PARENT, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 65);
@@ -684,30 +800,15 @@ static const char* get_item_icon(ItemType type) {
     }
 }
 
-static const char* get_weather_icon(int weathercode) {
-    // WMO Weather interpretation codes (WW)
-    // https://open-meteo.com/en/docs
-    // 0: Clear sky
-    // 1-3: Mainly clear, partly cloudy, overcast
-    // 45,48: Fog
-    // 51-67: Rain (various intensities)
-    // 71-86: Snow
-    // 95-99: Thunderstorm
-    
-    if (weathercode == 0 || weathercode == 1) {
-        return LV_SYMBOL_DUMMY;  // Sun (use dummy for clear, or a custom glyph)
-    } else if (weathercode == 2) {
-        return LV_SYMBOL_DUMMY;  // Partly cloudy
-    } else if (weathercode == 3 || weathercode == 45 || weathercode == 48) {
-        return LV_SYMBOL_DUMMY;  // Cloud
-    } else if ((weathercode >= 51 && weathercode <= 67) || (weathercode >= 80 && weathercode <= 82)) {
-        return LV_SYMBOL_DOWNLOAD;  // Rain (use download arrow as rain)
-    } else if (weathercode >= 71 && weathercode <= 77) {
-        return "*";  // Snow
-    } else if (weathercode >= 95) {
-        return LV_SYMBOL_WARNING;  // Storm
-    }
-    return "";  // Default
+static const lv_image_dsc_t* get_weather_icon(int weathercode) {
+    // WMO weather interpretation codes (Open-Meteo "weathercode")
+    if (weathercode == 0 || weathercode == 1) return &mb_wx_sun;      // clear / mainly clear
+    if (weathercode == 2) return &mb_wx_partly;                        // partly cloudy
+    if (weathercode == 45 || weathercode == 48) return &mb_wx_fog;     // fog
+    if ((weathercode >= 51 && weathercode <= 67) ||
+        (weathercode >= 80 && weathercode <= 82)) return &mb_wx_rain;  // drizzle / rain / showers
+    if (weathercode >= 95) return &mb_wx_storm;                        // thunderstorm
+    return &mb_wx_cloud;                                               // 3 overcast, snow, unknown
 }
 
 #endif  // BOARD_MORNING_BOARD
