@@ -245,6 +245,7 @@ void morning_ui_show_screen(MorningScreen screen) {
     current_screen = screen;
     switch (screen) {
         case MORNING_SCREEN_CLAWD:
+            splash_set_dance_mode(morning_ui_dance_day());
             if (clawd_container) {
                 lv_obj_clear_flag(clawd_container, LV_OBJ_FLAG_HIDDEN);
                 splash_show();
@@ -324,7 +325,26 @@ void morning_ui_tick() {
     }
 }
 
+// Friday (all scheduled hours: mornings and afternoons) or a family birthday
+// today -> Clawd mostly dances on the splash.
+bool morning_ui_dance_day() {
+    time_t now; time(&now);
+    if (now < 1700000000) return false;            // clock not set yet
+    struct tm t; localtime_r(&now, &t);
+    if (t.tm_wday == 5) return true;
+    if (current_feed && current_feed->valid && current_feed->day_count > 0) {
+        char today[16];
+        strftime(today, sizeof(today), "%Y-%m-%d", &t);
+        for (int d = 0; d < current_feed->day_count; d++) {
+            if (strcmp(current_feed->days[d].date, today) == 0)
+                return current_feed->days[d].birthday_count > 0;
+        }
+    }
+    return false;
+}
+
 void morning_ui_check_schedule() {
+    splash_set_dance_mode(morning_ui_dance_day());
     bool should_be_on = morning_ui_should_be_on();
     
     if (should_be_on && !screen_is_on) {

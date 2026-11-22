@@ -39,5 +39,7 @@ void morning_ui_reset_to_clawd();
 
 // Check if screen is currently on
 bool morning_ui_is_screen_on();
+// Friday or a family birthday today (Clawd mostly dances)
+bool morning_ui_dance_day();
 // Black overlay used as "screen off" (backlight PWM polarity unverified)
 void morning_ui_set_blank(bool blank);

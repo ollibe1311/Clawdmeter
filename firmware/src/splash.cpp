@@ -8,6 +8,7 @@
 #include <Arduino.h>
 #include <string.h>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 
 // 60×60 stage. CELL sized so the canvas fits the smaller display dimension —
 // the canvas is square and centered, so on portrait or letterboxed panels
@@ -45,6 +46,31 @@ static bool active = false;
 // While splash is showing, auto-cycle to the next animation in the current
 // rate-driven group every this many ms.
 #define SPLASH_ROTATE_INTERVAL_MS 20000
+#ifdef BOARD_MORNING_BOARD
+// Morning Board: random clip from the whole catalog, rotating every 20-30 s,
+// never the same clip twice in a row. "Dance mode" (Friday, family
+// birthdays) picks dancing most of the time.
+static uint32_t rotate_ms = SPLASH_ROTATE_INTERVAL_MS;
+static bool dance_mode = false;
+static int find_anim(const char* name);
+void splash_set_dance_mode(bool on) { dance_mode = on; }
+static uint16_t morning_pick_index(void) {
+    rotate_ms = 20000 + (esp_random() % 10001);           // 20-30 s
+    if (SPLASH_ANIM_COUNT <= 1) return 0;
+    int dancing = find_anim("dancing");
+    if (dance_mode && dancing >= 0 && (esp_random() % 4) != 0) {   // ~75% dancing
+        if (dancing != cur_anim) return (uint16_t)dancing;
+        // already dancing: keep dancing (repeat allowed in dance mode)
+        return (uint16_t)dancing;
+    }
+    uint16_t idx = (uint16_t)(esp_random() % (SPLASH_ANIM_COUNT - 1));
+    if (idx >= cur_anim) idx++;                             // skip current clip
+    return idx;
+}
+#define SPLASH_ROTATE_MS rotate_ms
+#else
+#define SPLASH_ROTATE_MS SPLASH_ROTATE_INTERVAL_MS
+#endif
 
 // Usage-rate animation groups: 4 groups × up to 4 animations each.
 // Filled at init by matching literal names from splash_anims[].
@@ -768,7 +794,7 @@ void splash_tick(void) {
 
     // Auto-rotate — never a hard cut. Walkers switch only while standing at
     // home; everything else releases its loop and switches after the outro.
-    if (now - last_pick_ms >= SPLASH_ROTATE_INTERVAL_MS) {
+    if (now - last_pick_ms >= SPLASH_ROTATE_MS) {
         if (walk_active) {
             if (walk_phase == 0 && pb_done) splash_pick_for_current_rate();
         } else {
@@ -837,8 +863,30 @@ void splash_next(void) {
     Serial.printf("splash: -> %s\n", a->name);
 }
 
+#ifdef BOARD_MORNING_BOARD
+static int find_anim(const char* name) {
+    for (int i = 0; i < SPLASH_ANIM_COUNT; i++)
+        if (strcmp(splash_anims[i].name, name) == 0) return i;
+    return -1;
+}
+#endif
+
 void splash_pick_for_current_rate(void) {
     if (SPLASH_ANIM_COUNT == 0) return;
+#ifdef BOARD_MORNING_BOARD
+    {
+        cur_anim = morning_pick_index();
+        cur_frame = 0;
+        frame_started_ms = millis();
+        last_pick_ms = frame_started_ms;
+        const splash_anim_def_t *ma = &splash_anims[cur_anim];
+        anim_reset(ma);
+        render_frame(compose_stage(ma, 0), ma->palette);
+        Serial.printf("splash: -> %s (next in %lus%s)\n", ma->name,
+                      (unsigned long)(rotate_ms / 1000), dance_mode ? ", dance mode" : "");
+        return;
+    }
+#endif
     int g = usage_rate_group();
     if (g < 0 || g >= GROUP_COUNT) g = 0;
     if (group_size[g] == 0) return;

@@ -21,6 +21,9 @@ void splash_hide(void);
 // trigger a re-pick when the rate group changes mid-display.
 void splash_pick_for_current_rate(void);
 
+// Morning Board: favour the dancing clip (Friday, family birthdays).
+void splash_set_dance_mode(bool on);
+
 // True when splash is currently rendering (used to gate re-picks).
 bool splash_is_active(void);
 
