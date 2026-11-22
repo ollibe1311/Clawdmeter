@@ -173,16 +173,13 @@ void loop() {
         bool should_be_on = morning_ui_should_be_on();
         bool screen_on = morning_ui_is_screen_on();
         
-        if (should_be_on && !backlight_on) {
-            // Turn on backlight (CH32V003 PWM on Rev4)
-            io_expander_set_brightness(255);
-            backlight_on = true;
-            Serial.println("Screen schedule: backlight ON");
-        } else if (!should_be_on && backlight_on && !screen_on) {
-            // Turn off backlight when screen is idle and outside scheduled hours
-            io_expander_set_brightness(0);
-            backlight_on = false;
-            Serial.println("Screen schedule: backlight OFF");
+        // "Off" = black overlay (tap wakes). The CH32 PWM backlight is not
+        // driven until its polarity is verified; see io_expander.cpp.
+        bool want_on = should_be_on || screen_on;
+        if (want_on != backlight_on) {
+            morning_ui_set_blank(!want_on);
+            backlight_on = want_on;
+            Serial.printf("Screen schedule: %s\n", want_on ? "ON" : "OFF (black overlay)");
         }
     }
     

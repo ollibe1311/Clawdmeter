@@ -359,6 +359,34 @@ void morning_ui_reset_to_clawd() {
     morning_ui_show_screen(MORNING_SCREEN_CLAWD);
 }
 
+// Screen-off without touching the backlight: a black, clickable overlay on
+// the top layer. Tapping it wakes the board.
+static lv_obj_t* blank_overlay = nullptr;
+static void blank_tap_cb(lv_event_t* e) {
+    (void)e;
+    if (blank_overlay) lv_obj_add_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
+    morning_ui_wake();
+}
+void morning_ui_set_blank(bool blank) {
+    if (!blank_overlay) {
+        blank_overlay = lv_obj_create(lv_layer_top());
+        lv_obj_set_size(blank_overlay, 480, 480);
+        lv_obj_set_pos(blank_overlay, 0, 0);
+        lv_obj_set_style_bg_color(blank_overlay, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(blank_overlay, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(blank_overlay, 0, 0);
+        lv_obj_set_style_radius(blank_overlay, 0, 0);
+        lv_obj_set_style_pad_all(blank_overlay, 0, 0);
+        lv_obj_clear_flag(blank_overlay, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(blank_overlay, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(blank_overlay, blank_tap_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
+    }
+    bool hidden = lv_obj_has_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
+    if (blank && hidden) lv_obj_clear_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
+    else if (!blank && !hidden) lv_obj_add_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
+}
+
 bool morning_ui_is_screen_on() {
     return screen_is_on;
 }

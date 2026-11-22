@@ -99,10 +99,11 @@ void io_expander_set_backlight(bool on) {
     // Rev4 backlight is the CH32's PWM channel (register 0x05), not an EXIO bit.
     // EXIO2 on Rev4 is touch INT, so leave the latch alone on the CH32.
     // For boolean on/off, use full brightness (255) or off (0).
-    if (is_ch32) {
-        io_expander_set_brightness(on ? 255 : 0);
-        return;
-    }
+    // Do NOT drive the PWM register from here: its polarity is unverified on
+    // Rev4 (see io_expander_set_brightness) and display_hal_begin() calls this
+    // at boot, so a wrong guess would black the screen on every boot. The
+    // CH32's power-on PWM default already gives a lit panel.
+    if (is_ch32) return;
     if (on) output_latch |= (1u << IOX_PIN_BACKLIGHT);
     else    output_latch &= ~(1u << IOX_PIN_BACKLIGHT);
     iox_commit_output();
@@ -113,8 +114,25 @@ void io_expander_set_brightness(uint8_t level) {
     // Reference: Waveshare ESP32-S3-Touch-LCD-4 Rev4.0 schematic and
     // CH32V003 firmware implementation at I2C address 0x24.
     // TCA9554 (pre-Rev4): no PWM, treat as on/off at EXIO2.
+    //
+    // VERDICT (2026-11-22): register 0x05 is the PWM register on the Rev4 CH32
+    // (Waveshare io_extension.h: IO_EXTENSION_PWM_ADDR 0x05; ESPHome
+    // waveshare_io_ch32v003). Polarity is NOT agreed: Espressif's
+    // ESP32_IO_Expander driver for this exact board (commit 7eea233) says
+    // inverted, 0 = max .. 247 = off, while Waveshare's 7B demo treats it as
+    // 0-100% * 2.55 with a 97% cap. Writing 0 could mean full brightness and
+    // 255 could mean off. Until verified on Oliver's board this is a no-op on
+    // the CH32; screen-off uses a black LVGL overlay instead
+    // (morning_ui_set_blank). Define LCD4_CH32_PWM_INVERTED_VERIFIED after a
+    // bench test to enable the inverted mapping below. Never touches the EXIO
+    // output register, so it cannot raise the buzzer bit (EXIO6).
     if (is_ch32) {
-        iox_write(0x05, level);
+#ifdef LCD4_CH32_PWM_INVERTED_VERIFIED
+        uint8_t duty = (uint8_t)(247 - ((uint32_t)level * 247 / 255));
+        iox_write(0x05, duty);
+#else
+        (void)level;
+#endif
     } else {
         io_expander_set_backlight(level > 0);
     }
