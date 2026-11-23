@@ -48,4 +48,6 @@ void splash_mascot_set_visible(bool v);
 // Animation control (for scheduled playback)
 int splash_get_anim_count(void);
 void splash_set_anim(int index);
+// Auto-rotation between clips (default on). Off = clips change only via splash_set_anim().
+void splash_set_auto_rotate(bool on);
 int splash_get_current_anim(void);

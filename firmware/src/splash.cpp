@@ -42,6 +42,8 @@ static uint16_t cur_frame = 0;
 static uint32_t frame_started_ms = 0;
 static uint32_t last_pick_ms = 0;
 static bool active = false;
+static bool auto_rotate = true;   // Morning Board turns this off (sequence drives clips)
+void splash_set_auto_rotate(bool on) { auto_rotate = on; }
 
 // While splash is showing, auto-cycle to the next animation in the current
 // rate-driven group every this many ms.
@@ -794,7 +796,7 @@ void splash_tick(void) {
 
     // Auto-rotate — never a hard cut. Walkers switch only while standing at
     // home; everything else releases its loop and switches after the outro.
-    if (now - last_pick_ms >= SPLASH_ROTATE_MS) {
+    if (auto_rotate && now - last_pick_ms >= SPLASH_ROTATE_MS) {
         if (walk_active) {
             if (walk_phase == 0 && pb_done) splash_pick_for_current_rate();
         } else {
@@ -937,6 +939,7 @@ void splash_set_anim(int index) {
     cur_anim = (uint16_t)index;
     cur_frame = 0;
     frame_started_ms = millis();
+    last_pick_ms = frame_started_ms;
     const splash_anim_def_t *a = &splash_anims[cur_anim];
     anim_reset(a);
     render_frame(compose_stage(a, 0), a->palette);

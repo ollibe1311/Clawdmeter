@@ -75,6 +75,7 @@ static int add_birthday_rows(lv_obj_t* parent, const DayData* day, int y);
 static const lv_image_dsc_t* get_weather_icon(int weathercode);
 static void handle_touch_event(lv_event_t* e);
 static void handle_clawd_tap(lv_event_t* e);
+static void go_idle();
 
 void morning_ui_init() {
     lv_obj_t* screen = lv_scr_act();
@@ -90,8 +91,11 @@ void morning_ui_init() {
     create_kid_screen(&kid2_container);
     create_parents_screen();
     
-    // Start on Clawd screen
-    morning_ui_show_screen(MORNING_SCREEN_CLAWD);
+    // Clips only change under the scheduled sequence's control
+    splash_set_auto_rotate(false);
+
+    // Boot: show the day view for the 2-minute idle window, then blank
+    morning_ui_show_screen(MORNING_SCREEN_KID1);
     last_activity_ms = millis();
 }
 
@@ -268,8 +272,8 @@ void morning_ui_show_screen(MorningScreen screen) {
             if (parents_container) lv_obj_clear_flag(parents_container, LV_OBJ_FLAG_HIDDEN);
             break;
     }
-    
-    last_activity_ms = millis();
+    // (last_activity_ms is touch time only; programmatic screen changes
+    //  must not keep the screen awake)
 }
 
 void morning_ui_update_feed(const FeedData* feed) {
@@ -331,9 +335,8 @@ void morning_ui_tick() {
             clips_played++;
             
             if (clips_played >= 3) {
-                // Sequence complete, go to blank screen
+                // Sequence complete: blanking is decided below (one place)
                 animation_playing = false;
-                morning_ui_set_blank(true);
                 Serial.println("Animation: Sequence complete");
             } else {
                 // Switch to next clip
@@ -343,13 +346,22 @@ void morning_ui_tick() {
         }
     }
     
-    // Check for idle timeout (but not during scheduled animations)
-    if (!animation_playing && millis() - last_activity_ms > IDLE_TIMEOUT_MS) {
-        if (current_screen != MORNING_SCREEN_CLAWD) {
-            morning_ui_reset_to_clawd();
-        } else if (!morning_ui_should_be_on()) {
-            // Outside scheduled hours - sleep
-            screen_is_on = false;
+    // Single source of truth for blank vs visible:
+    //   visible = touched within IDLE_TIMEOUT_MS OR scheduled sequence playing
+    // (no on-hours window: the screen is blank all day otherwise)
+    bool touched = (millis() - last_activity_ms) < IDLE_TIMEOUT_MS;
+    bool visible = touched || animation_playing;
+    if (visible != screen_is_on) {
+        screen_is_on = visible;
+        if (visible) {
+            // Woken by a touch while idle on the (paused) Clawd page -> day view
+            if (!animation_playing && current_screen == MORNING_SCREEN_CLAWD)
+                morning_ui_show_screen(MORNING_SCREEN_KID1);
+            morning_ui_set_blank(false);
+            Serial.println("Screen: ON");
+        } else {
+            go_idle();
+            Serial.println("Screen: OFF (blank overlay)");
         }
     }
 }
@@ -373,19 +385,8 @@ bool morning_ui_dance_day() {
 }
 
 void morning_ui_check_schedule() {
+    // Only dance mode now; blank/visible is decided in morning_ui_tick().
     splash_set_dance_mode(morning_ui_dance_day());
-    bool should_be_on = morning_ui_should_be_on();
-    
-    if (should_be_on && !screen_is_on) {
-        // Auto wake
-        screen_is_on = true;
-        // Backlight control handled in morning_main
-    } else if (!should_be_on && screen_is_on) {
-        // Auto sleep (unless recently touched)
-        if (millis() - last_activity_ms > IDLE_TIMEOUT_MS) {
-            screen_is_on = false;
-        }
-    }
 }
 
 bool morning_ui_should_be_on() {
@@ -409,7 +410,6 @@ bool morning_ui_should_be_on() {
 }
 
 void morning_ui_wake() {
-    screen_is_on = true;
     last_activity_ms = millis();
     
     // Stop any scheduled animation in progress
@@ -520,9 +520,21 @@ static void slide_day(int dir) {
     lv_anim_start(&a);
 }
 
-void morning_ui_reset_to_clawd() {
+// Idle state: day 0, Clawd page with the splash paused, black overlay on top.
+static void go_idle() {
     current_day_offset = 0;
+    morning_ui_update_feed(current_feed);          // rebuild pages for today
     morning_ui_show_screen(MORNING_SCREEN_CLAWD);
+    splash_hide();                                 // no clip cycling under the overlay
+    morning_ui_set_blank(true);
+}
+
+// "Done" (top-strip tap, button): go blank now instead of waiting 2 minutes.
+void morning_ui_reset_to_clawd() {
+    if (animation_playing) morning_ui_stop_animation();
+    last_activity_ms = millis() - IDLE_TIMEOUT_MS - 1;
+    screen_is_on = false;
+    go_idle();
 }
 
 // Screen-off without touching the backlight: a black, clickable overlay on
@@ -532,6 +544,8 @@ static void blank_tap_cb(lv_event_t* e) {
     (void)e;
     if (blank_overlay) lv_obj_add_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
     morning_ui_wake();
+    if (current_screen == MORNING_SCREEN_CLAWD) morning_ui_show_screen(MORNING_SCREEN_KID1);
+    screen_is_on = true;
 }
 void morning_ui_set_blank(bool blank) {
     if (!blank_overlay) {

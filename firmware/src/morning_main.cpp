@@ -229,7 +229,6 @@ void setup() {
 static uint32_t last_schedule_check = 0;
 static uint32_t last_fetch_check = 0;
 static uint32_t last_animation_check = 0;
-static bool backlight_on = true;
 
 // OTA info, printed for the "OTA" serial command. Called from
 // morning_net_process_serial(): that function drains every byte on the USB
@@ -275,18 +274,7 @@ void loop() {
         last_schedule_check = millis();
         morning_ui_check_schedule();
         
-        // Screen scheduling: on 6-9am and 3-8:30pm, off after 2 min idle otherwise
-        bool should_be_on = morning_ui_should_be_on();
-        bool screen_on = morning_ui_is_screen_on();
-        
-        // "Off" = black overlay (tap wakes). The CH32 PWM backlight is not
-        // driven until its polarity is verified; see io_expander.cpp.
-        bool want_on = should_be_on || screen_on;
-        if (want_on != backlight_on) {
-            morning_ui_set_blank(!want_on);
-            backlight_on = want_on;
-            Serial.printf("Screen schedule: %s\n", want_on ? "ON" : "OFF (black overlay)");
-        }
+        // Blank/visible is decided in morning_ui_tick() (single source of truth).
     }
     
     // Periodic data refresh check (networking module handles timing)
@@ -302,7 +290,9 @@ void loop() {
     bool btn_now = input_hal_is_held(INPUT_BTN_PRIMARY);
     if (btn_now && !btn_was) {
         // Tap to wake or cycle screens
-        if (morning_ui_get_current_screen() == MORNING_SCREEN_CLAWD) {
+        // Button: wake to the day view when idle/Clawd, otherwise go blank
+        if (!morning_ui_is_screen_on() || morning_ui_get_current_screen() == MORNING_SCREEN_CLAWD) {
+            morning_ui_wake();
             morning_ui_show_screen(MORNING_SCREEN_KID1);
         } else {
             morning_ui_reset_to_clawd();
