@@ -42,7 +42,11 @@ static lv_obj_t* kid2_container = nullptr;
 static lv_obj_t* parents_container = nullptr;
 static lv_obj_t* clock_container = nullptr;
 static lv_obj_t* clock_digits = nullptr;
-static lv_obj_t* clock_info = nullptr;
+static lv_obj_t* clock_info = nullptr;      // "Tue 24 Nov"
+static lv_obj_t* clock_row = nullptr;       // flex row: date, icon, temp
+static lv_obj_t* clock_wx_icon = nullptr;
+static lv_obj_t* clock_temp = nullptr;      // "19°"
+static int clock_wx = -1;                   // WxKind for the icon, -1 = none
 static char clock_text[8] = "--:--";
 static int clock_last_min = -1;
 
@@ -79,6 +83,18 @@ static const lv_image_dsc_t* get_item_icon(const Item* item);
 static int add_item_row(lv_obj_t* parent, const lv_image_dsc_t* icon, const char* text, int y);
 static int add_birthday_rows(lv_obj_t* parent, const DayData* day, int y);
 static const lv_image_dsc_t* get_weather_icon(int weathercode);
+// One WMO weathercode mapping (Open-Meteo daily "weathercode") shared by the
+// day view's images and the clock's block icons.
+enum WxKind { WX_SUN, WX_PARTLY, WX_CLOUD, WX_FOG, WX_RAIN, WX_SNOW, WX_STORM, WX_COUNT };
+static WxKind weather_kind(int c) {
+    if (c == 0 || c == 1) return WX_SUN;                          // clear / mainly clear
+    if (c == 2) return WX_PARTLY;                                 // partly cloudy
+    if (c == 45 || c == 48) return WX_FOG;                        // fog
+    if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82)) return WX_RAIN;  // drizzle / rain / showers
+    if ((c >= 71 && c <= 77) || c == 85 || c == 86) return WX_SNOW;    // snow
+    if (c >= 95) return WX_STORM;                                 // thunderstorm
+    return WX_CLOUD;                                              // 3 overcast, unknown
+}
 static void handle_touch_event(lv_event_t* e);
 static void handle_clawd_tap(lv_event_t* e);
 static void go_idle();
@@ -953,14 +969,14 @@ static int add_birthday_rows(lv_obj_t* parent, const DayData* day, int y) {
 }
 
 static const lv_image_dsc_t* get_weather_icon(int weathercode) {
-    // WMO weather interpretation codes (Open-Meteo "weathercode")
-    if (weathercode == 0 || weathercode == 1) return &mb_wx_sun;      // clear / mainly clear
-    if (weathercode == 2) return &mb_wx_partly;                        // partly cloudy
-    if (weathercode == 45 || weathercode == 48) return &mb_wx_fog;     // fog
-    if ((weathercode >= 51 && weathercode <= 67) ||
-        (weathercode >= 80 && weathercode <= 82)) return &mb_wx_rain;  // drizzle / rain / showers
-    if (weathercode >= 95) return &mb_wx_storm;                        // thunderstorm
-    return &mb_wx_cloud;                                               // 3 overcast, snow, unknown
+    switch (weather_kind(weathercode)) {
+        case WX_SUN:    return &mb_wx_sun;
+        case WX_PARTLY: return &mb_wx_partly;
+        case WX_FOG:    return &mb_wx_fog;
+        case WX_RAIN:   return &mb_wx_rain;
+        case WX_STORM:  return &mb_wx_storm;
+        default:        return &mb_wx_cloud;   // overcast, snow (no day-view snow icon), unknown
+    }
 }
 
 // Scheduled animation system: play 3 random clips at :00 and :30
@@ -1103,6 +1119,48 @@ static void clock_draw_cb(lv_event_t* e) {
     }
 }
 
+// Clock weather icons: 7x7 blocks, 4 px pitch, 1 px gap (27 px), same block
+// look as the digits. Preview: mockups/clock_preview.py (wx_icons.py).
+#define WXI_PITCH 4
+#define WXI_GAP   1
+static const char* const CLOCK_WX_ICONS[WX_COUNT][7] = {
+    /* WX_SUN    */ {"...O...", ".O...O.", "..OOO..", "O.OOO.O", "..OOO..", ".O...O.", "...O..."},
+    /* WX_PARTLY */ {".O.....", "O.OO...", ".OOOGG.", ".OGGGGG", "GGGGGGG", "GGGGGGG", "......."},
+    /* WX_CLOUD  */ {".......", "..GGG..", ".GGGGG.", "GGGGGGG", "GGGGGGG", ".......", "......."},
+    /* WX_FOG    */ {"..GGG..", ".GGGGG.", "GGGGGGG", ".......", "FFFFF..", ".......", "..FFFFF"},
+    /* WX_RAIN   */ {"..GGG..", ".GGGGG.", "GGGGGGG", "GGGGGGG", ".......", "B..B..B", ".B..B.."},
+    /* WX_SNOW   */ {"..GGG..", ".GGGGG.", "GGGGGGG", "GGGGGGG", ".......", "W..W..W", ".W..W.."},
+    /* WX_STORM  */ {"..GGG..", ".GGGGG.", "GGGGGGG", "GGGYGGG", "..YY...", "...YY..", "...Y..."},
+};
+static lv_color_t clock_wx_color(char ch) {
+    switch (ch) {
+        case 'O': return CLOCK_ORANGE;               // sun
+        case 'Y': return lv_color_hex(0xF2C14E);     // bolt (warm yellow)
+        case 'B': return lv_color_hex(0x6FA8DC);     // rain (soft blue)
+        case 'W': return lv_color_hex(0xF2F0EA);     // snow
+        case 'F': return lv_color_hex(0x8A8880);     // fog lines
+        default:  return CLOCK_GREY;                 // cloud
+    }
+}
+static void clock_wx_draw_cb(lv_event_t* e) {
+    if (clock_wx < 0 || clock_wx >= WX_COUNT) return;
+    lv_layer_t* layer = lv_event_get_layer(e);
+    lv_obj_t* obj = (lv_obj_t*)lv_event_get_target(e);
+    lv_area_t co; lv_obj_get_coords(obj, &co);
+    lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d);
+    d.bg_opa = LV_OPA_COVER; d.radius = 0; d.border_width = 0;
+    for (int r = 0; r < 7; r++)
+        for (int k = 0; k < 7; k++) {
+            char ch = CLOCK_WX_ICONS[clock_wx][r][k];
+            if (ch == '.') continue;
+            d.bg_color = clock_wx_color(ch);
+            lv_area_t a;
+            a.x1 = co.x1 + k * WXI_PITCH; a.y1 = co.y1 + r * WXI_PITCH;
+            a.x2 = a.x1 + WXI_PITCH - WXI_GAP - 1; a.y2 = a.y1 + WXI_PITCH - WXI_GAP - 1;
+            lv_draw_rect(layer, &d, &a);
+        }
+}
+
 static void clock_tap_cb(lv_event_t* e) {
     (void)e;
     if (current_screen != MORNING_SCREEN_CLOCK) return;
@@ -1133,13 +1191,36 @@ static void create_clock_screen() {
     lv_obj_add_flag(clock_digits, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_event_cb(clock_digits, clock_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
 
-    clock_info = lv_label_create(clock_container);
-    lv_obj_set_style_text_font(clock_info, &morning_font_28, 0);
-    lv_obj_set_style_text_color(clock_info, CLOCK_GREY, 0);
-    lv_obj_clear_flag(clock_info, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(clock_info, LV_OBJ_FLAG_EVENT_BUBBLE);
-    lv_label_set_text(clock_info, "");
-    lv_obj_align(clock_info, LV_ALIGN_TOP_MID, 0, 296);
+    // Grey info line: "Tue 24 Nov  [icon] 19°", centred as one row
+    clock_row = lv_obj_create(clock_container);
+    lv_obj_remove_style_all(clock_row);
+    lv_obj_set_size(clock_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(clock_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(clock_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(clock_row, 8, 0);
+    lv_obj_clear_flag(clock_row, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_add_flag(clock_row, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_align(clock_row, LV_ALIGN_TOP_MID, 0, 296);
+
+    clock_info = lv_label_create(clock_row);
+    clock_wx_icon = lv_obj_create(clock_row);
+    clock_temp = lv_label_create(clock_row);
+    lv_obj_t* labels[2] = {clock_info, clock_temp};
+    for (lv_obj_t* l : labels) {
+        lv_obj_set_style_text_font(l, &morning_font_28, 0);
+        lv_obj_set_style_text_color(l, CLOCK_GREY, 0);
+        lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(l, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_label_set_text(l, "");
+    }
+    lv_obj_remove_style_all(clock_wx_icon);
+    lv_obj_set_size(clock_wx_icon, 7 * WXI_PITCH - WXI_GAP, 7 * WXI_PITCH - WXI_GAP);
+    lv_obj_set_style_margin_left(clock_wx_icon, 8, 0);     // ~two spaces after the date
+    lv_obj_clear_flag(clock_wx_icon, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_add_flag(clock_wx_icon, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_event_cb(clock_wx_icon, clock_wx_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
+    lv_obj_add_flag(clock_wx_icon, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(clock_temp, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_add_flag(clock_container, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1156,18 +1237,30 @@ static void update_clock(bool force) {
     if (valid) {
         int h = t.tm_hour % 12; if (h == 0) h = 12;      // 12-hour, no am/pm
         snprintf(clock_text, sizeof(clock_text), "%d:%02d", h, t.tm_min);
-        // Atkinson has no middle dot (U+00B7), so two spaces separate the parts
-        char info[48];
-        int n = snprintf(info, sizeof(info), "%s %d %s", get_day_name(t.tm_wday), t.tm_mday,
-                         get_month_name(t.tm_mon));
-        if (current_weather && current_weather->valid && n > 0 && n < (int)sizeof(info))
-            snprintf(info + n, sizeof(info) - n, "  %d\xC2\xB0", (int)lroundf(current_weather->max_temp[0]));
+        char info[24];
+        snprintf(info, sizeof(info), "%s %d %s", get_day_name(t.tm_wday), t.tm_mday,
+                 get_month_name(t.tm_mon));
         lv_label_set_text(clock_info, info);
     } else {
         strlcpy(clock_text, "--:--", sizeof(clock_text));
         lv_label_set_text(clock_info, "");
     }
-    lv_obj_align(clock_info, LV_ALIGN_TOP_MID, 0, 296);
+    // Today's weather: block icon + max temp; nothing if there's no data
+    bool wx = valid && current_weather && current_weather->valid;
+    if (wx) {
+        char temp[12];
+        snprintf(temp, sizeof(temp), "%d\xC2\xB0", (int)lroundf(current_weather->max_temp[0]));
+        lv_label_set_text(clock_temp, temp);
+        clock_wx = (int)weather_kind(current_weather->weathercode[0]);
+        lv_obj_clear_flag(clock_wx_icon, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(clock_temp, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_invalidate(clock_wx_icon);
+    } else {
+        clock_wx = -1;
+        lv_obj_add_flag(clock_wx_icon, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(clock_temp, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_align(clock_row, LV_ALIGN_TOP_MID, 0, 296);
     if (clock_digits) lv_obj_invalidate(clock_digits);
 }
 
