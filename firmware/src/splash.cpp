@@ -55,6 +55,12 @@ void splash_set_auto_rotate(bool on) { auto_rotate = on; }
 static uint32_t rotate_ms = SPLASH_ROTATE_INTERVAL_MS;
 static bool dance_mode = false;
 static int find_anim(const char* name);
+// Clips left out of the random pool: "lurking" (Clawd peeks in from the left
+// edge and slides off-screen; Oliver doesn't like it).
+bool splash_anim_in_random_pool(int index) {
+    if (index < 0 || index >= SPLASH_ANIM_COUNT) return false;
+    return strcmp(splash_anims[index].name, "lurking") != 0;
+}
 void splash_set_dance_mode(bool on) { dance_mode = on; }
 static uint16_t morning_pick_index(void) {
     rotate_ms = 20000 + (esp_random() % 10001);           // 20-30 s
@@ -65,8 +71,11 @@ static uint16_t morning_pick_index(void) {
         // already dancing: keep dancing (repeat allowed in dance mode)
         return (uint16_t)dancing;
     }
-    uint16_t idx = (uint16_t)(esp_random() % (SPLASH_ANIM_COUNT - 1));
-    if (idx >= cur_anim) idx++;                             // skip current clip
+    uint16_t idx = cur_anim;
+    for (int tries = 0; tries < 50; tries++) {             // random, in pool, not current
+        idx = (uint16_t)(esp_random() % SPLASH_ANIM_COUNT);
+        if (idx != cur_anim && splash_anim_in_random_pool(idx)) break;
+    }
     return idx;
 }
 #define SPLASH_ROTATE_MS rotate_ms

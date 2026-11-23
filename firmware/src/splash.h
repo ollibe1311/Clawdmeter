@@ -50,4 +50,5 @@ int splash_get_anim_count(void);
 void splash_set_anim(int index);
 // Auto-rotation between clips (default on). Off = clips change only via splash_set_anim().
 void splash_set_auto_rotate(bool on);
+bool splash_anim_in_random_pool(int index);   // Morning Board: false for excluded clips
 int splash_get_current_anim(void);

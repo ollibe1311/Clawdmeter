@@ -6,7 +6,8 @@ enum MorningScreen {
     MORNING_SCREEN_CLAWD,
     MORNING_SCREEN_KID1,
     MORNING_SCREEN_KID2,
-    MORNING_SCREEN_PARENTS
+    MORNING_SCREEN_PARENTS,
+    MORNING_SCREEN_CLOCK     // idle screen: pixel-block clock
 };
 
 // Initialize UI system
@@ -41,6 +42,7 @@ void morning_ui_reset_to_clawd();
 bool morning_ui_is_screen_on();
 // Friday or a family birthday today (Clawd mostly dances)
 bool morning_ui_dance_day();
+// (Not used when idle any more: idle shows the clock with the backlight on.)
 // Screen off: black overlay + backlight off (CH32 PWM 0x05, inverted: 255 off, 0 full)
 void morning_ui_set_blank(bool blank);
 

@@ -40,6 +40,11 @@ static lv_obj_t* clawd_container = nullptr;
 static lv_obj_t* kid1_container = nullptr;
 static lv_obj_t* kid2_container = nullptr;
 static lv_obj_t* parents_container = nullptr;
+static lv_obj_t* clock_container = nullptr;
+static lv_obj_t* clock_digits = nullptr;
+static lv_obj_t* clock_info = nullptr;
+static char clock_text[8] = "--:--";
+static int clock_last_min = -1;
 
 // Slide animations (container x/y on the one screen; no extra screens to leak)
 #define SLIDE_MS 250
@@ -77,6 +82,8 @@ static const lv_image_dsc_t* get_weather_icon(int weathercode);
 static void handle_touch_event(lv_event_t* e);
 static void handle_clawd_tap(lv_event_t* e);
 static void go_idle();
+static void create_clock_screen();
+static void update_clock(bool force);
 
 void morning_ui_init() {
     lv_obj_t* screen = lv_scr_act();
@@ -91,11 +98,12 @@ void morning_ui_init() {
     create_kid_screen(&kid1_container);
     create_kid_screen(&kid2_container);
     create_parents_screen();
+    create_clock_screen();
     
     // Clips only change under the scheduled sequence's control
     splash_set_auto_rotate(false);
 
-    // Boot: show the day view for the 2-minute idle window, then blank
+    // Boot: show the day view for the 2-minute idle window, then the clock
     morning_ui_show_screen(MORNING_SCREEN_KID1);
     last_activity_ms = millis();
 }
@@ -252,6 +260,7 @@ void morning_ui_show_screen(MorningScreen screen) {
     if (kid1_container) lv_obj_add_flag(kid1_container, LV_OBJ_FLAG_HIDDEN);
     if (kid2_container) lv_obj_add_flag(kid2_container, LV_OBJ_FLAG_HIDDEN);
     if (parents_container) lv_obj_add_flag(parents_container, LV_OBJ_FLAG_HIDDEN);
+    if (clock_container) lv_obj_add_flag(clock_container, LV_OBJ_FLAG_HIDDEN);
     
     // Show requested
     current_screen = screen;
@@ -271,6 +280,12 @@ void morning_ui_show_screen(MorningScreen screen) {
             break;
         case MORNING_SCREEN_PARENTS:
             if (parents_container) lv_obj_clear_flag(parents_container, LV_OBJ_FLAG_HIDDEN);
+            break;
+        case MORNING_SCREEN_CLOCK:
+            if (clock_container) {
+                update_clock(true);
+                lv_obj_clear_flag(clock_container, LV_OBJ_FLAG_HIDDEN);
+            }
             break;
     }
     // (last_activity_ms is touch time only; programmatic screen changes
@@ -317,6 +332,7 @@ void morning_ui_update_feed(const FeedData* feed) {
 void morning_ui_update_weather(const WeatherData* weather) {
     current_weather = weather;
     morning_ui_update_feed(current_feed);
+    if (current_screen == MORNING_SCREEN_CLOCK) update_clock(true);
 }
 
 MorningScreen morning_ui_get_current_screen() {
@@ -325,6 +341,7 @@ MorningScreen morning_ui_get_current_screen() {
 
 void morning_ui_tick() {
     splash_tick();
+    if (current_screen == MORNING_SCREEN_CLOCK) update_clock(false);   // redraws once a minute
     
     // Handle animation sequence playback
     if (animation_playing && current_screen == MORNING_SCREEN_CLAWD) {
@@ -336,7 +353,7 @@ void morning_ui_tick() {
             clips_played++;
             
             if (clips_played >= 3) {
-                // Sequence complete: blanking is decided below (one place)
+                // Sequence complete: back to the clock is decided below (one place)
                 animation_playing = false;
                 Serial.println("Animation: Sequence complete");
             } else {
@@ -347,22 +364,23 @@ void morning_ui_tick() {
         }
     }
     
-    // Single source of truth for blank vs visible:
-    //   visible = touched within IDLE_TIMEOUT_MS OR scheduled sequence playing
-    // (no on-hours window: the screen is blank all day otherwise)
+    // Single source of truth for active vs idle:
+    //   active = touched within IDLE_TIMEOUT_MS OR scheduled sequence playing
+    //   idle   = the pixel clock, backlight on (no blanking when idle)
     bool touched = (millis() - last_activity_ms) < IDLE_TIMEOUT_MS;
     bool visible = touched || animation_playing;
     if (visible != screen_is_on) {
         screen_is_on = visible;
         if (visible) {
-            // Woken by a touch while idle on the (paused) Clawd page -> day view
-            if (!animation_playing && current_screen == MORNING_SCREEN_CLAWD)
+            // Woken by a touch while idle (clock / paused Clawd) -> day view
+            if (!animation_playing && (current_screen == MORNING_SCREEN_CLAWD ||
+                                       current_screen == MORNING_SCREEN_CLOCK))
                 morning_ui_show_screen(MORNING_SCREEN_KID1);
             morning_ui_set_blank(false);
             Serial.println("Screen: ON");
         } else {
             go_idle();
-            Serial.println("Screen: OFF (blank overlay)");
+            Serial.println("Screen: idle (clock)");
         }
     }
 }
@@ -429,6 +447,7 @@ static lv_obj_t* container_for(MorningScreen s) {
         case MORNING_SCREEN_KID1:    return kid1_container;
         case MORNING_SCREEN_KID2:    return kid2_container;
         case MORNING_SCREEN_PARENTS: return parents_container;
+        case MORNING_SCREEN_CLOCK:   return nullptr;   // no slides on the clock
     }
     return nullptr;
 }
@@ -502,7 +521,7 @@ static void day_slide_out_done(lv_anim_t* a) {
 // Horizontal day change: dir +1 = next day (content moves left).
 static void slide_day(int dir) {
     lv_obj_t* c = container_for(current_screen);
-    if (!c || anim_busy || current_screen == MORNING_SCREEN_CLAWD) {
+    if (!c || anim_busy || current_screen == MORNING_SCREEN_CLAWD || current_screen == MORNING_SCREEN_CLOCK) {
         current_day_offset += dir;
         morning_ui_update_feed(current_feed);
         return;
@@ -521,16 +540,17 @@ static void slide_day(int dir) {
     lv_anim_start(&a);
 }
 
-// Idle state: day 0, Clawd page with the splash paused, black overlay on top.
+// Idle state: day 0, the pixel clock, splash stopped, backlight on.
+// (morning_ui_set_blank(true) still exists but is not used when idle.)
 static void go_idle() {
     current_day_offset = 0;
     morning_ui_update_feed(current_feed);          // rebuild pages for today
-    morning_ui_show_screen(MORNING_SCREEN_CLAWD);
-    splash_hide();                                 // no clip cycling under the overlay
-    morning_ui_set_blank(true);
+    splash_hide();                                 // no clip cycling behind the clock
+    morning_ui_show_screen(MORNING_SCREEN_CLOCK);
+    morning_ui_set_blank(false);                   // overlay hidden, 0x05 = 0
 }
 
-// "Done" (top-strip tap, button): go blank now instead of waiting 2 minutes.
+// "Done" (top-strip tap, button): back to the clock now instead of waiting 2 minutes.
 void morning_ui_reset_to_clawd() {
     if (animation_playing) morning_ui_stop_animation();
     last_activity_ms = millis() - IDLE_TIMEOUT_MS - 1;
@@ -548,7 +568,8 @@ static void blank_tap_cb(lv_event_t* e) {
     (void)e;
     morning_ui_wake();
     morning_ui_set_blank(false);  // backlight on, then hide the overlay
-    if (current_screen == MORNING_SCREEN_CLAWD) morning_ui_show_screen(MORNING_SCREEN_KID1);
+    if (current_screen == MORNING_SCREEN_CLAWD || current_screen == MORNING_SCREEN_CLOCK)
+        morning_ui_show_screen(MORNING_SCREEN_KID1);
     screen_is_on = true;
 }
 void morning_ui_set_blank(bool blank) {
@@ -955,7 +976,7 @@ static void start_animation_sequence() {
         do {
             idx = esp_random() % anim_count;
             attempts++;
-        } while (used[idx] && attempts < 100);
+        } while ((used[idx] || !splash_anim_in_random_pool(idx)) && attempts < 100);
         
         animation_sequence[i] = idx;
         used[idx] = true;
@@ -1021,6 +1042,133 @@ void morning_ui_stop_animation() {
         clips_played = 0;
         Serial.println("Animation: Stopped by user");
     }
+}
+
+// ---- Idle pixel clock ------------------------------------------------------
+// 5x7 block font (glyphs from Oliver's approved mockup, tools: mockups/clock.py)
+// drawn as separate square "pixels" in Clawd orange on black. Drawn by one
+// lv_obj's draw callback (no per-block objects), refreshed once a minute.
+#define CLOCK_ORANGE lv_color_hex(0xD97757)
+#define CLOCK_GREY   lv_color_hex(0xB0AEA5)
+#define CLOCK_GAP    3
+struct ClockGlyph { char c; uint8_t w; const char* rows[7]; };
+static const ClockGlyph CLOCK_FONT[] = {
+    {'0', 5, {"01110","10001","10011","10101","11001","10001","01110"}},
+    {'1', 5, {"00100","01100","00100","00100","00100","00100","01110"}},
+    {'2', 5, {"01110","10001","00001","00010","00100","01000","11111"}},
+    {'3', 5, {"11111","00010","00100","00010","00001","10001","01110"}},
+    {'4', 5, {"00010","00110","01010","10010","11111","00010","00010"}},
+    {'5', 5, {"11111","10000","11110","00001","00001","10001","01110"}},
+    {'6', 5, {"00110","01000","10000","11110","10001","10001","01110"}},
+    {'7', 5, {"11111","00001","00010","00100","01000","01000","01000"}},
+    {'8', 5, {"01110","10001","10001","01110","10001","10001","01110"}},
+    {'9', 5, {"01110","10001","10001","01111","00001","00010","01100"}},
+    {':', 1, {"0","1","1","0","1","1","0"}},
+    {'-', 5, {"00000","00000","00000","11111","00000","00000","00000"}},
+};
+static const ClockGlyph* clock_glyph(char c) {
+    for (size_t i = 0; i < sizeof(CLOCK_FONT) / sizeof(CLOCK_FONT[0]); i++)
+        if (CLOCK_FONT[i].c == c) return &CLOCK_FONT[i];
+    return nullptr;
+}
+
+// Block size: 21 px (as the mockup) for "7:42"; "10:42"-"12:59" would be
+// 25 columns x 21 = 525 px (wider than the panel), so 5-char times use 18 px.
+static void clock_draw_cb(lv_event_t* e) {
+    lv_layer_t* layer = lv_event_get_layer(e);
+    lv_obj_t* obj = (lv_obj_t*)lv_event_get_target(e);
+    lv_area_t co; lv_obj_get_coords(obj, &co);
+    int n = (int)strlen(clock_text);
+    int cols = 0;
+    for (int i = 0; i < n; i++) { const ClockGlyph* g = clock_glyph(clock_text[i]); if (g) cols += g->w + 1; }
+    if (cols == 0) return;
+    cols -= 1;
+    int b = (cols * 21 <= 470) ? 21 : 18;
+    int x = co.x1 + (480 - cols * b) / 2;
+    int y = co.y1 + (lv_area_get_height(&co) - 7 * b) / 2;
+    lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d);
+    d.bg_color = CLOCK_ORANGE; d.bg_opa = LV_OPA_COVER; d.radius = 0; d.border_width = 0;
+    for (int i = 0; i < n; i++) {
+        const ClockGlyph* g = clock_glyph(clock_text[i]);
+        if (!g) continue;
+        for (int r = 0; r < 7; r++)
+            for (int k = 0; k < g->w; k++)
+                if (g->rows[r][k] == '1') {
+                    lv_area_t a;
+                    a.x1 = x + k * b; a.y1 = y + r * b;
+                    a.x2 = a.x1 + b - CLOCK_GAP - 1; a.y2 = a.y1 + b - CLOCK_GAP - 1;
+                    lv_draw_rect(layer, &d, &a);
+                }
+        x += (g->w + 1) * b;
+    }
+}
+
+static void clock_tap_cb(lv_event_t* e) {
+    (void)e;
+    if (current_screen != MORNING_SCREEN_CLOCK) return;
+    Serial.println("UI: clock tapped -> kid page");
+    morning_ui_wake();
+    morning_ui_show_screen(MORNING_SCREEN_KID1);
+}
+
+static void create_clock_screen() {
+    clock_container = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(clock_container, 480, 480);
+    lv_obj_set_pos(clock_container, 0, 0);
+    lv_obj_set_style_bg_color(clock_container, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(clock_container, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(clock_container, 0, 0);
+    lv_obj_set_style_pad_all(clock_container, 0, 0);
+    lv_obj_set_style_radius(clock_container, 0, 0);
+    lv_obj_clear_flag(clock_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(clock_container, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(clock_container, clock_tap_cb, LV_EVENT_CLICKED, NULL);
+
+    // Digits band: 7 rows x 21 px = 147 px, top at y=120 (as the mockup)
+    clock_digits = lv_obj_create(clock_container);
+    lv_obj_remove_style_all(clock_digits);
+    lv_obj_set_size(clock_digits, 480, 147);
+    lv_obj_set_pos(clock_digits, 0, 120);
+    lv_obj_clear_flag(clock_digits, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_add_flag(clock_digits, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_event_cb(clock_digits, clock_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
+
+    clock_info = lv_label_create(clock_container);
+    lv_obj_set_style_text_font(clock_info, &morning_font_28, 0);
+    lv_obj_set_style_text_color(clock_info, CLOCK_GREY, 0);
+    lv_obj_clear_flag(clock_info, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(clock_info, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_label_set_text(clock_info, "");
+    lv_obj_align(clock_info, LV_ALIGN_TOP_MID, 0, 296);
+
+    lv_obj_add_flag(clock_container, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void update_clock(bool force) {
+    if (!clock_container) return;
+    time_t now; time(&now);
+    struct tm t; localtime_r(&now, &t);
+    bool valid = now > 1700000000;
+    int min_key = valid ? t.tm_hour * 60 + t.tm_min : -2;
+    if (!force && min_key == clock_last_min) return;
+    clock_last_min = min_key;
+
+    if (valid) {
+        int h = t.tm_hour % 12; if (h == 0) h = 12;      // 12-hour, no am/pm
+        snprintf(clock_text, sizeof(clock_text), "%d:%02d", h, t.tm_min);
+        // Atkinson has no middle dot (U+00B7), so two spaces separate the parts
+        char info[48];
+        int n = snprintf(info, sizeof(info), "%s %d %s", get_day_name(t.tm_wday), t.tm_mday,
+                         get_month_name(t.tm_mon));
+        if (current_weather && current_weather->valid && n > 0 && n < (int)sizeof(info))
+            snprintf(info + n, sizeof(info) - n, "  %d\xC2\xB0", (int)lroundf(current_weather->max_temp[0]));
+        lv_label_set_text(clock_info, info);
+    } else {
+        strlcpy(clock_text, "--:--", sizeof(clock_text));
+        lv_label_set_text(clock_info, "");
+    }
+    lv_obj_align(clock_info, LV_ALIGN_TOP_MID, 0, 296);
+    if (clock_digits) lv_obj_invalidate(clock_digits);
 }
 
 #endif  // BOARD_MORNING_BOARD

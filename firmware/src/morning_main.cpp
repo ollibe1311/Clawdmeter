@@ -290,8 +290,9 @@ void loop() {
     bool btn_now = input_hal_is_held(INPUT_BTN_PRIMARY);
     if (btn_now && !btn_was) {
         // Tap to wake or cycle screens
-        // Button: wake to the day view when idle/Clawd, otherwise go blank
-        if (!morning_ui_is_screen_on() || morning_ui_get_current_screen() == MORNING_SCREEN_CLAWD) {
+        // Button: wake to the day view when idle (clock/Clawd), otherwise back to the clock
+        if (!morning_ui_is_screen_on() || morning_ui_get_current_screen() == MORNING_SCREEN_CLAWD ||
+            morning_ui_get_current_screen() == MORNING_SCREEN_CLOCK) {
             morning_ui_wake();
             morning_ui_show_screen(MORNING_SCREEN_KID1);
         } else {
