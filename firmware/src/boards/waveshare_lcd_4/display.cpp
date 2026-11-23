@@ -47,8 +47,8 @@ void display_hal_begin(void) {
 }
 
 void display_hal_set_brightness(uint8_t level) {
-    // ST7701 has no panel brightness command. Backlight is an expander GPIO
-    // (on/off only) — idle fade therefore snaps off at 0 instead of dimming.
+    // ST7701 has no panel brightness command. Backlight is on/off via the
+    // expander (CH32 PWM 0x05: 0 full / 255 off; TCA9554: EXIO2).
     io_expander_set_backlight(level > 0);
 }
 

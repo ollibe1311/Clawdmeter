@@ -8,6 +8,7 @@
 #include "splash.h"
 #include "morning_weather_icons.h"
 #include "morning_item_icons.h"
+#include "boards/waveshare_lcd_4/io_expander.h"
 #include <ctype.h>
 #include <time.h>
 
@@ -537,13 +538,16 @@ void morning_ui_reset_to_clawd() {
     go_idle();
 }
 
-// Screen-off without touching the backlight: a black, clickable overlay on
-// the top layer. Tapping it wakes the board.
+// Screen-off: a black, clickable overlay on the top layer plus the backlight
+// off (CH32 PWM 0x05 = 255, inverted). Touch still works with the backlight
+// off, so tapping the overlay wakes the board. Every blank/unblank (idle
+// timeout, touch-to-wake, the :00/:30 sequence, BOOT button) goes through
+// morning_ui_set_blank, the only place that switches the backlight.
 static lv_obj_t* blank_overlay = nullptr;
 static void blank_tap_cb(lv_event_t* e) {
     (void)e;
-    if (blank_overlay) lv_obj_add_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
     morning_ui_wake();
+    morning_ui_set_blank(false);  // backlight on, then hide the overlay
     if (current_screen == MORNING_SCREEN_CLAWD) morning_ui_show_screen(MORNING_SCREEN_KID1);
     screen_is_on = true;
 }
@@ -563,8 +567,13 @@ void morning_ui_set_blank(bool blank) {
         lv_obj_add_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
     }
     bool hidden = lv_obj_has_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
-    if (blank && hidden) lv_obj_clear_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
-    else if (!blank && !hidden) lv_obj_add_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);
+    if (blank && hidden) {
+        lv_obj_clear_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);  // black overlay first
+        io_expander_set_backlight(false);                      // then 0x05 = 255
+    } else if (!blank && !hidden) {
+        io_expander_set_backlight(true);                       // 0x05 = 0 first
+        lv_obj_add_flag(blank_overlay, LV_OBJ_FLAG_HIDDEN);    // then hide overlay
+    }
 }
 
 bool morning_ui_is_screen_on() {

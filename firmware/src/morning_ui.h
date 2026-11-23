@@ -41,7 +41,7 @@ void morning_ui_reset_to_clawd();
 bool morning_ui_is_screen_on();
 // Friday or a family birthday today (Clawd mostly dances)
 bool morning_ui_dance_day();
-// Black overlay used as "screen off" (backlight PWM polarity unverified)
+// Screen off: black overlay + backlight off (CH32 PWM 0x05, inverted: 255 off, 0 full)
 void morning_ui_set_blank(bool blank);
 
 // Scheduled animation system (at :00 and :30)
