@@ -18,6 +18,7 @@ static const uint32_t WEATHER_INTERVAL_MS = 15 * 60 * 1000;  // 15 minutes (matc
 static const uint32_t WIFI_RECONNECT_INTERVALS[] = {5000, 10000, 20000, 40000, 60000};  // backoff
 static const int WIFI_RECONNECT_INTERVALS_COUNT = 5;
 
+void morning_print_ota_info();   // defined in morning_main.cpp
 static WebServer server(80);
 static uint32_t boot_time_ms = 0;
 static bool wifi_connected = false;
@@ -606,6 +607,8 @@ void morning_net_process_serial() {
                 } else {
                     Serial.printf("WiFi: %s\n", wifi_configured ? "Configured, not connected" : "Not configured");
                 }
+            } else if (strcmp(cmd_buf, "OTA") == 0 || strcmp(cmd_buf, "ota") == 0) {
+                morning_print_ota_info();
             } else if (strcmp(cmd_buf, "STATUS") == 0) {
                 extern void touch_hal_debug_status(void);
                 touch_hal_debug_status();

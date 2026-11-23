@@ -231,22 +231,17 @@ static uint32_t last_fetch_check = 0;
 static uint32_t last_animation_check = 0;
 static bool backlight_on = true;
 
-// Process custom serial commands (OTA password display)
-static void process_custom_serial() {
-    if (!Serial.available()) return;
-    
-    String line = Serial.readStringUntil('\n');
-    line.trim();
-    
-    if (line.equalsIgnoreCase("OTA")) {
-        Serial.println("\n=== OTA Configuration ===");
-        Serial.printf("Hostname: morningboard.local\n");
-        Serial.printf("Password: %s\n", ota_password);
-        Serial.println("\nUpload command:");
-        Serial.println("  export OTA_PASSWORD='<password>'");
-        Serial.println("  pio run -e morning_board -t upload --upload-port morningboard.local");
-        Serial.println("========================\n");
-    }
+// OTA info, printed for the "OTA" serial command. Called from
+// morning_net_process_serial(): that function drains every byte on the USB
+// serial port, so a separate reader here never saw the command.
+void morning_print_ota_info() {
+    Serial.println("\n=== OTA Configuration ===");
+    Serial.printf("Hostname: morningboard.local\n");
+    Serial.printf("Password: %s\n", ota_password);
+    Serial.println("\nUpload command:");
+    Serial.println("  export OTA_PASSWORD='<password>'");
+    Serial.println("  pio run -e morning_board -t upload --upload-port morningboard.local");
+    Serial.println("========================\n");
 }
 
 void loop() {
@@ -267,8 +262,7 @@ void loop() {
     // Process serial provisioning commands. Always accepted over USB serial:
     // gating on the provision window closed it as soon as WIFI_SSID was set,
     // so WIFI_PASS / FEED_URL / REBOOT that followed were silently dropped.
-    morning_net_process_serial();
-    process_custom_serial();
+    morning_net_process_serial();   // also handles "OTA"
     
     // Check scheduled animations every 30 seconds
     if (millis() - last_animation_check > 30000) {
