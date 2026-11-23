@@ -26,5 +26,10 @@ void morning_config_set_schedule(const ScreenSchedule& sched);
 void morning_config_get_weather_location(float* lat, float* lon);
 void morning_config_set_weather_location(float lat, float lon);
 
+// OTA password (generated randomly on first boot if not set)
+bool morning_config_get_ota_password(char* buf, size_t len);
+void morning_config_set_ota_password(const char* password);
+bool morning_config_has_ota_password();
+
 // Clear all config (factory reset)
 void morning_config_clear();

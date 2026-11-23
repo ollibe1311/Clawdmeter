@@ -113,6 +113,18 @@ void morning_config_set_weather_location(float lat, float lon) {
     prefs.putFloat("weather_lon", lon);
 }
 
+bool morning_config_get_ota_password(char* buf, size_t len) {
+    return prefs.getString("ota_pass", buf, len) > 0;
+}
+
+void morning_config_set_ota_password(const char* password) {
+    prefs.putString("ota_pass", password);
+}
+
+bool morning_config_has_ota_password() {
+    return prefs.isKey("ota_pass");
+}
+
 void morning_config_clear() {
     prefs.clear();
 }

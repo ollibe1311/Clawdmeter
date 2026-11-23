@@ -28,6 +28,13 @@ static uint32_t last_activity_ms = 0;
 static bool screen_is_on = true;
 static const uint32_t IDLE_TIMEOUT_MS = 120000;  // 2 minutes
 
+// Scheduled animation system
+static int last_fired_slot = -1;  // Track last fired slot (hour * 2 + (minute == 30 ? 1 : 0))
+static bool animation_playing = false;
+static int clips_played = 0;
+static int animation_sequence[3] = {-1, -1, -1};  // Indices of clips to play
+static uint32_t animation_start_ms = 0;
+
 static lv_obj_t* clawd_container = nullptr;
 static lv_obj_t* kid1_container = nullptr;
 static lv_obj_t* kid2_container = nullptr;
@@ -314,8 +321,30 @@ MorningScreen morning_ui_get_current_screen() {
 void morning_ui_tick() {
     splash_tick();
     
-    // Check for idle timeout
-    if (millis() - last_activity_ms > IDLE_TIMEOUT_MS) {
+    // Handle animation sequence playback
+    if (animation_playing && current_screen == MORNING_SCREEN_CLAWD) {
+        // Check if current clip has played long enough (20-30 seconds per clip)
+        uint32_t elapsed = millis() - animation_start_ms;
+        uint32_t clip_duration = 25000;  // 25 seconds per clip
+        
+        if (elapsed > (clips_played + 1) * clip_duration) {
+            clips_played++;
+            
+            if (clips_played >= 3) {
+                // Sequence complete, go to blank screen
+                animation_playing = false;
+                morning_ui_set_blank(true);
+                Serial.println("Animation: Sequence complete");
+            } else {
+                // Switch to next clip
+                splash_set_anim(animation_sequence[clips_played]);
+                Serial.printf("Animation: Clip %d/%d\n", clips_played + 1, 3);
+            }
+        }
+    }
+    
+    // Check for idle timeout (but not during scheduled animations)
+    if (!animation_playing && millis() - last_activity_ms > IDLE_TIMEOUT_MS) {
         if (current_screen != MORNING_SCREEN_CLAWD) {
             morning_ui_reset_to_clawd();
         } else if (!morning_ui_should_be_on()) {
@@ -382,6 +411,15 @@ bool morning_ui_should_be_on() {
 void morning_ui_wake() {
     screen_is_on = true;
     last_activity_ms = millis();
+    
+    // Stop any scheduled animation in progress
+    if (animation_playing) {
+        morning_ui_stop_animation();
+        // Show day view when woken during animation
+        if (current_screen == MORNING_SCREEN_CLAWD) {
+            morning_ui_show_screen(MORNING_SCREEN_KID1);
+        }
+    }
 }
 
 static lv_obj_t* container_for(MorningScreen s) {
@@ -879,6 +917,87 @@ static const lv_image_dsc_t* get_weather_icon(int weathercode) {
         (weathercode >= 80 && weathercode <= 82)) return &mb_wx_rain;  // drizzle / rain / showers
     if (weathercode >= 95) return &mb_wx_storm;                        // thunderstorm
     return &mb_wx_cloud;                                               // 3 overcast, snow, unknown
+}
+
+// Scheduled animation system: play 3 random clips at :00 and :30
+static void start_animation_sequence() {
+    int anim_count = splash_get_anim_count();
+    if (anim_count < 3) return;
+    
+    // Pick 3 unique random clips
+    bool used[20] = {false};  // Max 20 animations
+    for (int i = 0; i < 3; i++) {
+        int idx;
+        int attempts = 0;
+        do {
+            idx = esp_random() % anim_count;
+            attempts++;
+        } while (used[idx] && attempts < 100);
+        
+        animation_sequence[i] = idx;
+        used[idx] = true;
+    }
+    
+    clips_played = 0;
+    animation_playing = true;
+    animation_start_ms = millis();
+    
+    // Switch to Clawd screen and play first clip
+    morning_ui_show_screen(MORNING_SCREEN_CLAWD);
+    morning_ui_set_blank(false);  // Make sure screen is visible
+    
+    // Start first clip
+    splash_set_anim(animation_sequence[0]);
+    
+    Serial.printf("Animation: Starting sequence (3 clips)\n");
+}
+
+void morning_ui_check_animation_slot() {
+    // Get current time
+    struct tm timeinfo;
+    time_t now;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    
+    // Check if time is valid
+    if (timeinfo.tm_year < (2024 - 1900)) {
+        // Time not synced yet
+        return;
+    }
+    
+    // Calculate current slot: hour * 2 + (minute == 30 ? 1 : 0)
+    // Only fire at exactly :00 or :30
+    if (timeinfo.tm_min != 0 && timeinfo.tm_min != 30) {
+        return;
+    }
+    
+    int current_slot = timeinfo.tm_hour * 2 + (timeinfo.tm_min == 30 ? 1 : 0);
+    
+    // Skip if this slot already fired
+    if (current_slot == last_fired_slot) {
+        return;
+    }
+    
+    // Skip if screen is in use (touched within last 2 minutes)
+    if (millis() - last_activity_ms < IDLE_TIMEOUT_MS) {
+        Serial.printf("Animation: Skipping slot %02d:%02d (screen in use)\n", 
+                     timeinfo.tm_hour, timeinfo.tm_min);
+        last_fired_slot = current_slot;
+        return;
+    }
+    
+    // Fire this slot
+    last_fired_slot = current_slot;
+    Serial.printf("Animation: Firing slot %02d:%02d\n", timeinfo.tm_hour, timeinfo.tm_min);
+    start_animation_sequence();
+}
+
+void morning_ui_stop_animation() {
+    if (animation_playing) {
+        animation_playing = false;
+        clips_played = 0;
+        Serial.println("Animation: Stopped by user");
+    }
 }
 
 #endif  // BOARD_MORNING_BOARD

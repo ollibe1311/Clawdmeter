@@ -927,3 +927,21 @@ void splash_hide(void) {
 lv_obj_t* splash_get_root(void) {
     return splash_container;
 }
+
+int splash_get_anim_count(void) {
+    return SPLASH_ANIM_COUNT;
+}
+
+void splash_set_anim(int index) {
+    if (index < 0 || index >= SPLASH_ANIM_COUNT) return;
+    cur_anim = (uint16_t)index;
+    cur_frame = 0;
+    frame_started_ms = millis();
+    const splash_anim_def_t *a = &splash_anims[cur_anim];
+    anim_reset(a);
+    render_frame(compose_stage(a, 0), a->palette);
+}
+
+int splash_get_current_anim(void) {
+    return (int)cur_anim;
+}

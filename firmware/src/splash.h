@@ -44,3 +44,8 @@ void splash_mini_tick(void);
 lv_obj_t* splash_mascot_create(lv_obj_t *parent, int slot_x, int feet_y, int cell);
 void splash_mascot_tick(void);
 void splash_mascot_set_visible(bool v);
+
+// Animation control (for scheduled playback)
+int splash_get_anim_count(void);
+void splash_set_anim(int index);
+int splash_get_current_anim(void);

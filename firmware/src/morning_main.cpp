@@ -1,6 +1,7 @@
 #ifdef BOARD_MORNING_BOARD
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ArduinoOTA.h>
 #include <lvgl.h>
 #include <Wire.h>
 #include <esp_heap_caps.h>
@@ -9,6 +10,7 @@
 #include "morning_net.h"
 #include "morning_ui.h"
 #include "morning_data.h"
+#include "morning_fonts.h"
 
 #include "hal/board_caps.h"
 #include "hal/display_hal.h"
@@ -21,6 +23,11 @@
 #define BUF_LINES 40
 static uint16_t* buf1 = nullptr;
 static uint16_t* buf2 = nullptr;
+
+// OTA update state (must be before setup() for lambda capture)
+static bool ota_in_progress = false;
+static lv_obj_t* ota_label = nullptr;
+static char ota_password[33] = {0};  // Never logged
 
 static uint32_t my_tick(void) { return millis(); }
 
@@ -147,16 +154,110 @@ void setup() {
         morning_ui_update_weather(morning_net_get_cached_weather());
     }
     
+    // Setup ArduinoOTA with password from NVS
+    if (!morning_config_has_ota_password()) {
+        // Generate random password on first boot
+        const char* chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+        for (int i = 0; i < 16; i++) {
+            ota_password[i] = chars[esp_random() % strlen(chars)];
+        }
+        ota_password[16] = '\0';
+        morning_config_set_ota_password(ota_password);
+        Serial.println("Generated new OTA password (use 'OTA' command to view)");
+    } else {
+        char buf[64];
+        morning_config_get_ota_password(buf, sizeof(buf));
+        strlcpy(ota_password, buf, sizeof(ota_password));
+    }
+    
+    ArduinoOTA.setHostname("morningboard");
+    ArduinoOTA.setPassword(ota_password);
+    
+    ArduinoOTA.onStart([]() {
+        ota_in_progress = true;
+        Serial.println("OTA: Update starting");
+        
+        // Show updating screen
+        lv_obj_t* screen = lv_scr_act();
+        lv_obj_clean(screen);
+        
+        ota_label = lv_label_create(screen);
+        lv_label_set_text(ota_label, "Updating...\n0%");
+        lv_obj_set_style_text_font(ota_label, &morning_font_28, 0);
+        lv_obj_center(ota_label);
+    });
+    
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        int percent = (progress * 100) / total;
+        if (ota_label && percent % 10 == 0) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "Updating...\n%d%%", percent);
+            lv_label_set_text(ota_label, buf);
+            lv_timer_handler();
+        }
+    });
+    
+    ArduinoOTA.onEnd([]() {
+        Serial.println("OTA: Update complete");
+        if (ota_label) {
+            lv_label_set_text(ota_label, "Update complete!\nRestarting...");
+            lv_timer_handler();
+        }
+        delay(1000);
+    });
+    
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("OTA: Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+        
+        ota_in_progress = false;
+        ESP.restart();
+    });
+    
+    ArduinoOTA.begin();
+    
     Serial.printf("Morning Board ready (%dx%d)\n", W, H);
     Serial.printf("Web settings: http://morningboard.local or http://%s\n", 
                   WiFi.localIP().toString().c_str());
+    Serial.println("OTA ready on morningboard.local (use 'OTA' command for password)");
 }
 
 static uint32_t last_schedule_check = 0;
 static uint32_t last_fetch_check = 0;
+static uint32_t last_animation_check = 0;
 static bool backlight_on = true;
 
+// Process custom serial commands (OTA password display)
+static void process_custom_serial() {
+    if (!Serial.available()) return;
+    
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    
+    if (line.equalsIgnoreCase("OTA")) {
+        Serial.println("\n=== OTA Configuration ===");
+        Serial.printf("Hostname: morningboard.local\n");
+        Serial.printf("Password: %s\n", ota_password);
+        Serial.println("\nUpload command:");
+        Serial.println("  export OTA_PASSWORD='<password>'");
+        Serial.println("  pio run -e morning_board -t upload --upload-port morningboard.local");
+        Serial.println("========================\n");
+    }
+}
+
 void loop() {
+    // Skip normal operations during OTA update
+    if (ota_in_progress) {
+        ArduinoOTA.handle();
+        delay(10);
+        return;
+    }
+    
+    ArduinoOTA.handle();
     lv_timer_handler();
     morning_net_tick();
     morning_ui_tick();
@@ -167,6 +268,13 @@ void loop() {
     // gating on the provision window closed it as soon as WIFI_SSID was set,
     // so WIFI_PASS / FEED_URL / REBOOT that followed were silently dropped.
     morning_net_process_serial();
+    process_custom_serial();
+    
+    // Check scheduled animations every 30 seconds
+    if (millis() - last_animation_check > 30000) {
+        last_animation_check = millis();
+        morning_ui_check_animation_slot();
+    }
     
     // Check screen schedule every 10 seconds and control backlight
     if (millis() - last_schedule_check > 10000) {

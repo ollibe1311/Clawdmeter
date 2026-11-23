@@ -43,3 +43,9 @@ bool morning_ui_is_screen_on();
 bool morning_ui_dance_day();
 // Black overlay used as "screen off" (backlight PWM polarity unverified)
 void morning_ui_set_blank(bool blank);
+
+// Scheduled animation system (at :00 and :30)
+void morning_ui_check_animation_slot();
+
+// Stop current animation and show day view
+void morning_ui_stop_animation();
