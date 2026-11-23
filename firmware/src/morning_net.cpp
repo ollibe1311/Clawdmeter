@@ -9,6 +9,7 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#include "boards/waveshare_lcd_4/io_expander.h"
 
 static const char* TZ_STRING = "AEST-10AEDT,M10.1.0,M4.1.0/3";
 static const char* NTP_SERVER = "pool.ntp.org";
@@ -169,6 +170,25 @@ static void setup_webserver() {
     });
     
     // Handle settings update
+    // Backlight polarity test hook: /bl?v=N writes N (0-255) to CH32 reg 0x05;
+    // /bl with no args reads the register back and reports the boot value.
+    server.on("/bl", []() {
+        char msg[128];
+        if (server.hasArg("v")) {
+            int v = server.arg("v").toInt();
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
+            bool ok = io_expander_raw_pwm((uint8_t)v);
+            snprintf(msg, sizeof(msg), "BL wrote %d (%s); readback=%d; boot=%d\n",
+                     v, ok ? "ack" : "NACK/n.a.", io_expander_read_pwm(), io_expander_boot_pwm());
+        } else {
+            snprintf(msg, sizeof(msg), "BL readback=%d; boot=%d\n",
+                     io_expander_read_pwm(), io_expander_boot_pwm());
+        }
+        Serial.print(msg);
+        server.send(200, "text/plain", msg);
+    });
+
     server.on("/settings", HTTP_POST, []() {
         DressRules rules;
         rules.shorts_threshold = server.arg("shorts").toFloat();
@@ -607,6 +627,13 @@ void morning_net_process_serial() {
                 } else {
                     Serial.printf("WiFi: %s\n", wifi_configured ? "Configured, not connected" : "Not configured");
                 }
+            } else if (strncmp(cmd_buf, "BL ", 3) == 0) {
+                int v = atoi(cmd_buf + 3);
+                if (v < 0) v = 0;
+                if (v > 255) v = 255;
+                io_expander_raw_pwm((uint8_t)v);
+            } else if (strcmp(cmd_buf, "BL") == 0) {
+                Serial.printf("BL readback=%d boot=%d\n", io_expander_read_pwm(), io_expander_boot_pwm());
             } else if (strcmp(cmd_buf, "OTA") == 0 || strcmp(cmd_buf, "ota") == 0) {
                 morning_print_ota_info();
             } else if (strcmp(cmd_buf, "STATUS") == 0) {

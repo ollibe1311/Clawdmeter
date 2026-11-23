@@ -32,6 +32,8 @@
 static uint8_t expander_addr = 0;
 static bool    is_ch32       = false;
 static uint8_t output_latch  = 0xFF;
+static int     boot_pwm      = -2;   // CH32 reg 0x05 read at boot (-1 read failed, -2 n/a)
+#define CH32_REG_PWM         0x05
 
 static bool iox_probe(uint8_t addr) {
     Wire.beginTransmission(addr);
@@ -84,6 +86,11 @@ void io_expander_init(void) {
             if (in >= 0 && !(in & (1u << CH32_PIN_BUZZER))) break;
             delay(20);
         }
+        // Read-only peek at the backlight PWM register before anything writes
+        // it (nothing writes 0x05 at boot). Reported as the power-on default.
+        boot_pwm = iox_read(CH32_REG_PWM);
+        delay(10);
+        Serial.printf("LCD-4 CH32 PWM reg 0x05 at boot (read-only): %d\n", boot_pwm);
         Serial.printf("LCD-4 CH32 expander init (0x%02X) out=0x%02X in=0x%02X buzzer=%s\n",
                       expander_addr, output_latch, in & 0xFF,
                       (in >= 0 && (in & (1u << CH32_PIN_BUZZER))) ? "ON?!" : "off");
@@ -139,3 +146,21 @@ void io_expander_set_brightness(uint8_t level) {
 }
 
 uint8_t io_expander_addr(void) { return expander_addr; }
+
+// ---- Backlight polarity test hooks (serial "BL <n>", HTTP /bl?v=n) ----
+// Raw write of n to the CH32 PWM register 0x05 only. Never touches the EXIO
+// output/mode registers (buzzer-safe); iox_write adds the 10 ms settle delay.
+bool io_expander_raw_pwm(uint8_t value) {
+    if (!is_ch32 || !expander_addr) return false;
+    bool ok = iox_write(CH32_REG_PWM, value);
+    Serial.printf("BL: wrote %u to CH32 reg 0x05 (%s) t=%lums\n", value, ok ? "ack" : "NACK",
+                  (unsigned long)millis());
+    return ok;
+}
+int io_expander_read_pwm(void) {
+    if (!is_ch32 || !expander_addr) return -2;
+    int v = iox_read(CH32_REG_PWM);
+    delay(10);
+    return v;
+}
+int io_expander_boot_pwm(void) { return boot_pwm; }
