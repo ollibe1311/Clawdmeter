@@ -8,6 +8,16 @@
 // buffer; bounce_buffer_size_px gives ESP-IDF two SRAM bounce buffers so
 // CPU writes to PSRAM don't tear against the DMA scan.
 //
+// Bounce buffer size: the LCD ISR refills one half while the DMA scans the
+// other. In the Arduino-ESP32 S3 build CONFIG_LCD_RGB_ISR_IRAM_SAFE is off, so
+// that ISR can be delayed (Wi-Fi/background PSRAM traffic, other ISRs). With
+// 10 lines a half (~0.46 ms at 12 MHz pclk) a late refill let the panel scan
+// stale bounce-buffer data for the first pixels of a line: short stray/missing
+// slivers at the LEFT of the screen, i.e. on the clock's hour digit (Oliver's
+// "flickery 7", 2026-11-25). 20 lines (~0.9 ms of slack) per half; 480*480 is
+// a multiple of 480*20 as ESP-IDF requires. Costs ~19 KB more internal RAM.
+#define LCD_BOUNCE_LINES 20
+//
 // Do not call rgbpanel->getFrameBuffer() after gfx->begin() — that
 // reconstructs the RGB panel a second time and crashes (no free slot).
 
@@ -31,7 +41,7 @@ void display_hal_init(void) {
         0 /* pclk_active_neg */, GFX_NOT_DEFINED /* prefer_speed */,
         false /* useBigEndian */,
         0 /* de_idle_high */, 0 /* pclk_idle_high */,
-        LCD_WIDTH * 10 /* bounce_buffer_size_px */);
+        LCD_WIDTH * LCD_BOUNCE_LINES /* bounce_buffer_size_px */);
     gfx = new Arduino_RGB_Display(
         LCD_WIDTH, LCD_HEIGHT, rgbpanel, 0 /* rotation */,
         true /* auto_flush */,

@@ -182,8 +182,10 @@ static void setup_webserver() {
             snprintf(msg, sizeof(msg), "BL wrote %d (%s); readback=%d; boot=%d\n",
                      v, ok ? "ack" : "NACK/n.a.", io_expander_read_pwm(), io_expander_boot_pwm());
         } else {
-            snprintf(msg, sizeof(msg), "BL readback=%d; boot=%d\n",
-                     io_expander_read_pwm(), io_expander_boot_pwm());
+            snprintf(msg, sizeof(msg), "BL readback=%d; boot=%d; int_free=%u; int_largest=%u\n",
+                     io_expander_read_pwm(), io_expander_boot_pwm(),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         }
         Serial.print(msg);
         server.send(200, "text/plain", msg);

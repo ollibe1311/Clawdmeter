@@ -1090,16 +1090,44 @@ static const ClockGlyph* clock_glyph(char c) {
 
 // Block size: 21 px (as the mockup) for "7:42"; "10:42"-"12:59" would be
 // 25 columns x 21 = 525 px (wider than the panel), so 5-char times use 18 px.
+// Block size for a time string: 21 px for "7:42", 18 px for "10:42"-"12:59".
+static int clock_cols(const char* t) {
+    int cols = 0;
+    for (const char* p = t; *p; p++) { const ClockGlyph* g = clock_glyph(*p); if (g) cols += g->w + 1; }
+    return cols > 0 ? cols - 1 : 0;
+}
+static int clock_block(int cols) { return (cols * 21 <= 470) ? 21 : 18; }
+
+// Invalidate only the glyphs that changed (e.g. "7:19" -> "7:20" redraws the
+// two minute digits; the hour digit is left alone). Falls back to the whole
+// band when the length or block size changes (9:59 -> 10:00, 12:59 -> 1:00).
+static void clock_invalidate_changed(const char* old_t, const char* new_t) {
+    if (!clock_digits) return;
+    int oc = clock_cols(old_t), nc = clock_cols(new_t);
+    if (strlen(old_t) != strlen(new_t) || oc != nc || oc == 0) { lv_obj_invalidate(clock_digits); return; }
+    lv_area_t co; lv_obj_get_coords(clock_digits, &co);
+    int b = clock_block(nc);
+    int x = co.x1 + (480 - nc * b) / 2;
+    int y = co.y1 + (lv_area_get_height(&co) - 7 * b) / 2;
+    for (size_t i = 0; new_t[i]; i++) {
+        const ClockGlyph* g = clock_glyph(new_t[i]);
+        int w = g ? g->w : 0;
+        if (old_t[i] != new_t[i]) {
+            lv_area_t a = { (int32_t)x, (int32_t)y, (int32_t)(x + w * b - 1), (int32_t)(y + 7 * b - 1) };
+            lv_obj_invalidate_area(clock_digits, &a);
+        }
+        x += (w + 1) * b;
+    }
+}
+
 static void clock_draw_cb(lv_event_t* e) {
     lv_layer_t* layer = lv_event_get_layer(e);
     lv_obj_t* obj = (lv_obj_t*)lv_event_get_target(e);
     lv_area_t co; lv_obj_get_coords(obj, &co);
     int n = (int)strlen(clock_text);
-    int cols = 0;
-    for (int i = 0; i < n; i++) { const ClockGlyph* g = clock_glyph(clock_text[i]); if (g) cols += g->w + 1; }
+    int cols = clock_cols(clock_text);
     if (cols == 0) return;
-    cols -= 1;
-    int b = (cols * 21 <= 470) ? 21 : 18;
+    int b = clock_block(cols);
     int x = co.x1 + (480 - cols * b) / 2;
     int y = co.y1 + (lv_area_get_height(&co) - 7 * b) / 2;
     lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d);
@@ -1233,6 +1261,8 @@ static void update_clock(bool force) {
     int min_key = valid ? t.tm_hour * 60 + t.tm_min : -2;
     if (!force && min_key == clock_last_min) return;
     clock_last_min = min_key;
+    char old_text[sizeof(clock_text)];
+    strlcpy(old_text, clock_text, sizeof(old_text));
 
     if (valid) {
         int h = t.tm_hour % 12; if (h == 0) h = 12;      // 12-hour, no am/pm
@@ -1261,7 +1291,8 @@ static void update_clock(bool force) {
         lv_obj_add_flag(clock_temp, LV_OBJ_FLAG_HIDDEN);
     }
     lv_obj_align(clock_row, LV_ALIGN_TOP_MID, 0, 296);
-    if (clock_digits) lv_obj_invalidate(clock_digits);
+    if (force) { if (clock_digits) lv_obj_invalidate(clock_digits); }
+    else clock_invalidate_changed(old_text, clock_text);
 }
 
 #endif  // BOARD_MORNING_BOARD
