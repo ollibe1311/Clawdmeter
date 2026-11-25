@@ -18,3 +18,20 @@ daemon/.venv/
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Morning Board provisioning secrets
+tools/provision.env
+
+# Local secrets (never commit)
+wifi.env
+*.env
+!tools/provision.env.example
+include/wifi_secrets.h
+
+# Local tool/build dirs (never commit)
+.venv/
+venv/
+.pio/
+node_modules/
+__pycache__/
+*.pyc

@@ -21,6 +21,9 @@ void splash_hide(void);
 // trigger a re-pick when the rate group changes mid-display.
 void splash_pick_for_current_rate(void);
 
+// Morning Board: favour the dancing clip (Friday, family birthdays).
+void splash_set_dance_mode(bool on);
+
 // True when splash is currently rendering (used to gate re-picks).
 bool splash_is_active(void);
 
@@ -41,3 +44,11 @@ void splash_mini_tick(void);
 lv_obj_t* splash_mascot_create(lv_obj_t *parent, int slot_x, int feet_y, int cell);
 void splash_mascot_tick(void);
 void splash_mascot_set_visible(bool v);
+
+// Animation control (for scheduled playback)
+int splash_get_anim_count(void);
+void splash_set_anim(int index);
+// Auto-rotation between clips (default on). Off = clips change only via splash_set_anim().
+void splash_set_auto_rotate(bool on);
+bool splash_anim_in_random_pool(int index);   // Morning Board: false for excluded clips
+int splash_get_current_anim(void);

@@ -8,6 +8,23 @@
 // buffer; bounce_buffer_size_px gives ESP-IDF two SRAM bounce buffers so
 // CPU writes to PSRAM don't tear against the DMA scan.
 //
+// Left-edge slivers (Oliver, 2026-11-25/26): stray/missing pixels at the
+// START of scanlines on both the clock and day view. Panel timing is not the
+// cause: porches/pulses/polarity/pclk edge match Waveshare's own Arduino demos
+// for this board exactly (H 10/8/50, V 10/8/20, polarity 1, 12 MHz default).
+// The cause is the bounce-buffer refill ISR running late: in the Arduino-ESP32
+// S3 build CONFIG_LCD_RGB_ISR_IRAM_SAFE and SPIRAM XIP (FETCH_INSTRUCTIONS /
+// RODATA) are off and Wi-Fi/lwIP buffers are in PSRAM, so the ISR shares the
+// flash/PSRAM bus with Wi-Fi bursts; when a refill is late the DMA scans stale
+// data for the first pixels of the next band. Waveshare's bundled GFX library
+// hardcodes 40-line bounce buffers for this reason. 20 lines at 12 MHz (0.9 ms)
+// was not enough. Now 30 lines at 10 MHz pclk: 548 px/line -> 54.8 us/line,
+// ~1.64 ms of slack per half (1.8x), ~35 fps (fine for LCD). 480 is a multiple
+// of 30 as ESP-IDF requires. Wi-Fi power save is off too (morning_net.cpp).
+// Internal RAM: 2 x 480 x 30 x 2 = 57.6 KB (TLS buffers are internal here).
+#define LCD_BOUNCE_LINES 30
+#define LCD_PCLK_HZ      10000000
+//
 // Do not call rgbpanel->getFrameBuffer() after gfx->begin() — that
 // reconstructs the RGB panel a second time and crashes (no free slot).
 
@@ -28,10 +45,10 @@ void display_hal_init(void) {
         8 /* hsync_pulse_width */, 50 /* hsync_back_porch */,
         1 /* vsync_polarity */, 10 /* vsync_front_porch */,
         8 /* vsync_pulse_width */, 20 /* vsync_back_porch */,
-        0 /* pclk_active_neg */, GFX_NOT_DEFINED /* prefer_speed */,
+        0 /* pclk_active_neg */, LCD_PCLK_HZ /* prefer_speed */,
         false /* useBigEndian */,
         0 /* de_idle_high */, 0 /* pclk_idle_high */,
-        LCD_WIDTH * 10 /* bounce_buffer_size_px */);
+        LCD_WIDTH * LCD_BOUNCE_LINES /* bounce_buffer_size_px */);
     gfx = new Arduino_RGB_Display(
         LCD_WIDTH, LCD_HEIGHT, rgbpanel, 0 /* rotation */,
         true /* auto_flush */,
@@ -47,8 +64,8 @@ void display_hal_begin(void) {
 }
 
 void display_hal_set_brightness(uint8_t level) {
-    // ST7701 has no panel brightness command. Backlight is an expander GPIO
-    // (on/off only) — idle fade therefore snaps off at 0 instead of dimming.
+    // ST7701 has no panel brightness command. Backlight is on/off via the
+    // expander (CH32 PWM 0x05: 0 full / 255 off; TCA9554: EXIO2).
     io_expander_set_backlight(level > 0);
 }
 
