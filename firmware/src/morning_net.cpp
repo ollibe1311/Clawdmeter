@@ -31,6 +31,8 @@ static int wifi_reconnect_index = 0;
 // FeedData is ~100 KB. As a static it sat in internal RAM and starved mbedTLS
 // ("SSL - Memory allocation failed" on every HTTPS fetch). Keep it in PSRAM.
 static FeedData* cached_feed_p = nullptr;
+static int      last_feed_code = 0;        // HTTP code (or -N client error) of the last feed fetch
+static uint32_t last_feed_ok_ms = 0;       // millis() of the last successful feed fetch
 #define cached_feed (*cached_feed_p)
 static WeatherData cached_weather = {};
 static uint32_t last_feed_fetch = 0;
@@ -94,6 +96,10 @@ static void connect_wifi() {
     wifi_configured = true;
     Serial.printf("Connecting to WiFi: %s\n", ssid);
     WiFi.mode(WIFI_STA);
+    // No modem sleep (WIFI_PS_NONE): with power save the radio wakes in bursts
+    // for beacons, and Wi-Fi/lwIP buffers live in PSRAM in this build, which
+    // competes with the RGB panel's bounce-buffer refills (left-edge slivers).
+    WiFi.setSleep(false);
     WiFi.begin(ssid, pass);
     
     // Wait up to 10 seconds
@@ -173,7 +179,7 @@ static void setup_webserver() {
     // Backlight polarity test hook: /bl?v=N writes N (0-255) to CH32 reg 0x05;
     // /bl with no args reads the register back and reports the boot value.
     server.on("/bl", []() {
-        char msg[128];
+        char msg[320];
         if (server.hasArg("v")) {
             int v = server.arg("v").toInt();
             if (v < 0) v = 0;
@@ -182,10 +188,16 @@ static void setup_webserver() {
             snprintf(msg, sizeof(msg), "BL wrote %d (%s); readback=%d; boot=%d\n",
                      v, ok ? "ack" : "NACK/n.a.", io_expander_read_pwm(), io_expander_boot_pwm());
         } else {
-            snprintf(msg, sizeof(msg), "BL readback=%d; boot=%d; int_free=%u; int_largest=%u\n",
+            snprintf(msg, sizeof(msg),
+                     "BL readback=%d; boot=%d; int_free=%u; int_largest=%u; feed_code=%d; "
+                     "feed_ok_age_s=%ld; feed_first=%s; feed_generated=%s\n",
                      io_expander_read_pwm(), io_expander_boot_pwm(),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                     last_feed_code,
+                     last_feed_ok_ms ? (long)((millis() - last_feed_ok_ms) / 1000) : -1L,
+                     cached_feed.day_count > 0 ? cached_feed.days[0].date : "-",
+                     cached_feed.generated);
         }
         Serial.print(msg);
         server.send(200, "text/plain", msg);
@@ -227,6 +239,7 @@ void morning_net_tick() {
             char ssid[64], pass[64];
             if (morning_config_get_wifi_ssid(ssid, sizeof(ssid)) &&
                 morning_config_get_wifi_pass(pass, sizeof(pass))) {
+                WiFi.setSleep(false);
                 WiFi.begin(ssid, pass);
                 
                 // Quick check (don't block)
@@ -263,6 +276,21 @@ void morning_net_tick() {
     if (wifi_connected) {
         server.handleClient();
         
+        // Trad pushes the feed around 06:15: fetch again at 06:20 and 06:30
+        // local time (once each per day) on top of the 15-minute refresh.
+        {
+            static int done_key = -1;
+            time_t now = time(nullptr);
+            if (now > 1700000000) {
+                struct tm t; localtime_r(&now, &t);
+                int key = t.tm_yday * 2 + (t.tm_min >= 30 ? 1 : 0);
+                if (t.tm_hour == 6 && (t.tm_min == 20 || t.tm_min == 30) && done_key != key) {
+                    done_key = key;
+                    Serial.printf("Feed: scheduled %02d:%02d refetch\n", t.tm_hour, t.tm_min);
+                    morning_net_fetch_feed(nullptr);
+                }
+            }
+        }
         // Periodic feed fetch (every 15 min when connected)
         if (force_fetch || millis() - last_feed_fetch > FEED_INTERVAL_MS) {
             morning_net_fetch_feed(nullptr);
@@ -303,11 +331,20 @@ static bool fetch_feed_sync(FeedData* data) {
         return false;
     }
     
+    // Cache-bust: the Gist raw CDN caches for 5 min (max-age=300) per URL, so a
+    // fetch soon after Trad's push could get the old feed. GitHub ignores the
+    // query string; the CDN keys on it.
+    {
+        size_t n = strlen(url);
+        snprintf(url + n, sizeof(url) - n, "%cmb=%lu", strchr(url, '?') ? '&' : '?',
+                 (unsigned long)time(nullptr));
+    }
     HTTPClient http;
     http.begin(url);
     http.setTimeout(5000);
     
     int code = http.GET();
+    last_feed_code = code;
     if (code != 200) {
         Serial.printf("Feed fetch failed: %d\n", code);
         http.end();
@@ -503,10 +540,18 @@ void morning_net_fetch_feed(void (*callback)(const FeedData*, bool)) {
         return;
     }
     
+    char prev_generated[sizeof(cached_feed.generated)];
+    strlcpy(prev_generated, cached_feed.generated, sizeof(prev_generated));
     bool success = fetch_feed_sync(&cached_feed);
     if (success) {
-        save_cached_feed();
+        last_feed_ok_ms = millis();
+        // Flash writes stall the display's bounce-buffer ISR, so only rewrite
+        // the LittleFS cache when the feed actually changed.
+        if (strcmp(prev_generated, cached_feed.generated) != 0) save_cached_feed();
     }
+    Serial.printf("Feed fetch %s (code %d), first day %s, generated %s\n", success ? "OK" : "FAILED",
+                  last_feed_code, cached_feed.day_count > 0 ? cached_feed.days[0].date : "-",
+                  cached_feed.generated);
     if (callback) callback(&cached_feed, success);
 }
 

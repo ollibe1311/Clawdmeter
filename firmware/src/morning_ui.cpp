@@ -83,6 +83,34 @@ static const lv_image_dsc_t* get_item_icon(const Item* item);
 static int add_item_row(lv_obj_t* parent, const lv_image_dsc_t* icon, const char* text, int y);
 static int add_birthday_rows(lv_obj_t* parent, const DayData* day, int y);
 static const lv_image_dsc_t* get_weather_icon(int weathercode);
+// Feed day shown for current_day_offset: matched to today's Sydney date, not
+// days[0] (a feed generated yesterday starts with yesterday).
+static bool feed_is_stale = false;   // newest feed day is before today
+static int feed_today_index(const FeedData* f) {
+    feed_is_stale = false;
+    if (!f || !f->valid || f->day_count <= 0) return 0;
+    time_t now; time(&now);
+    if (now < 1700000000) return 0;                      // clock not set: best effort
+    struct tm t; localtime_r(&now, &t);
+    char today[16];
+    strftime(today, sizeof(today), "%Y-%m-%d", &t);
+    int newest_past = -1;
+    for (int i = 0; i < f->day_count; i++) {
+        int c = strcmp(f->days[i].date, today);          // ISO dates compare as strings
+        if (c == 0) return i;
+        if (c < 0) newest_past = i;
+    }
+    if (newest_past == f->day_count - 1) {               // every day is before today
+        feed_is_stale = true;
+        return newest_past;
+    }
+    return newest_past + 1;                              // today missing: next day after it
+}
+static int feed_index_for_offset(const FeedData* f) {
+    int i = feed_today_index(f) + current_day_offset;
+    if (f && i >= f->day_count) i = f->day_count - 1;
+    return i < 0 ? 0 : i;
+}
 // One WMO weathercode mapping (Open-Meteo daily "weathercode") shared by the
 // day view's images and the clock's block icons.
 enum WxKind { WX_SUN, WX_PARTLY, WX_CLOUD, WX_FOG, WX_RAIN, WX_SNOW, WX_STORM, WX_COUNT };
@@ -311,9 +339,9 @@ void morning_ui_show_screen(MorningScreen screen) {
 void morning_ui_update_feed(const FeedData* feed) {
     current_feed = feed;
     
-    if (!feed || !feed->valid || current_day_offset >= feed->day_count) return;
+    if (!feed || !feed->valid || feed->day_count <= 0) return;
     
-    const DayData* day = &feed->days[current_day_offset];
+    const DayData* day = &feed->days[feed_index_for_offset(feed)];
     float max_temp = (current_weather && current_weather->valid && current_day_offset < 7) ? 
                      current_weather->max_temp[current_day_offset] : 20.0f;
     int precip = (current_weather && current_weather->valid && current_day_offset < 7) ? 
@@ -330,6 +358,7 @@ void morning_ui_update_feed(const FeedData* feed) {
              get_day_name(tm_date.tm_wday), 
              tm_date.tm_mday,
              get_month_name(tm_date.tm_mon));
+    if (feed_is_stale) strlcat(date_str, " (old)", sizeof(date_str));   // feed not updated yet
     
     // Determine which kid is first
     int arlo_first = get_arlo_first_offset();
@@ -358,6 +387,19 @@ MorningScreen morning_ui_get_current_screen() {
 void morning_ui_tick() {
     splash_tick();
     if (current_screen == MORNING_SCREEN_CLOCK) update_clock(false);   // redraws once a minute
+    {   // New local day: re-pick today's feed entry (pages were built for yesterday)
+        static int last_yday = -1;
+        static uint32_t last_check = 0;
+        if (millis() - last_check > 10000) {
+            last_check = millis();
+            time_t now; time(&now);
+            if (now > 1700000000) {
+                struct tm t; localtime_r(&now, &t);
+                if (last_yday != -1 && t.tm_yday != last_yday) morning_ui_update_feed(current_feed);
+                last_yday = t.tm_yday;
+            }
+        }
+    }
     
     // Handle animation sequence playback
     if (animation_playing && current_screen == MORNING_SCREEN_CLAWD) {
@@ -715,8 +757,8 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
     }
     
     // Birthdays (cake) above the items
-    const DayData* bday_day = (current_feed && current_day_offset < current_feed->day_count)
-                              ? &current_feed->days[current_day_offset] : nullptr;
+    const DayData* bday_day = (current_feed && current_feed->valid && current_feed->day_count > 0)
+                              ? &current_feed->days[feed_index_for_offset(current_feed)] : nullptr;
     if (bday_day) y_pos = add_birthday_rows(container, bday_day, y_pos);
 
     // Items list
@@ -788,11 +830,11 @@ static void update_kid_screen(lv_obj_t* container, const KidDay* kid,
 }
 
 static void update_parents_screen(const char* date_str) {
-    if (!current_feed || !current_feed->valid || current_day_offset >= current_feed->day_count) return;
+    if (!current_feed || !current_feed->valid || current_feed->day_count <= 0) return;
     
     lv_obj_clean(parents_container);
     
-    const DayData* day = &current_feed->days[current_day_offset];
+    const DayData* day = &current_feed->days[feed_index_for_offset(current_feed)];
     
     // Top bar
     lv_obj_t* top_bar = lv_obj_create(parents_container);

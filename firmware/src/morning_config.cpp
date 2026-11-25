@@ -1,6 +1,7 @@
 #ifdef BOARD_MORNING_BOARD
 #include "morning_config.h"
 #include <Preferences.h>
+#include <string.h>
 
 static Preferences prefs;
 static DressRules dress_rules;
@@ -66,12 +67,24 @@ void morning_config_set_wifi_pass(const char* pass) {
     prefs.putString("wifi_pass", pass);
 }
 
+// Cached in RAM: an NVS read is a flash read, which briefly disables the
+// cache and can stall the RGB panel's bounce-buffer ISR (display slivers).
+static char feed_url_cache[256] = {0};
+static bool feed_url_loaded = false;
 bool morning_config_get_feed_url(char* buf, size_t len) {
-    return prefs.getString("feed_url", buf, len) > 0;
+    if (!feed_url_loaded) {
+        if (prefs.getString("feed_url", feed_url_cache, sizeof(feed_url_cache)) == 0) feed_url_cache[0] = 0;
+        feed_url_loaded = true;
+    }
+    if (!feed_url_cache[0]) return false;
+    strlcpy(buf, feed_url_cache, len);
+    return true;
 }
 
 void morning_config_set_feed_url(const char* url) {
     prefs.putString("feed_url", url);
+    strlcpy(feed_url_cache, url, sizeof(feed_url_cache));
+    feed_url_loaded = true;
 }
 
 DressRules morning_config_get_dress_rules() {

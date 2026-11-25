@@ -8,15 +8,22 @@
 // buffer; bounce_buffer_size_px gives ESP-IDF two SRAM bounce buffers so
 // CPU writes to PSRAM don't tear against the DMA scan.
 //
-// Bounce buffer size: the LCD ISR refills one half while the DMA scans the
-// other. In the Arduino-ESP32 S3 build CONFIG_LCD_RGB_ISR_IRAM_SAFE is off, so
-// that ISR can be delayed (Wi-Fi/background PSRAM traffic, other ISRs). With
-// 10 lines a half (~0.46 ms at 12 MHz pclk) a late refill let the panel scan
-// stale bounce-buffer data for the first pixels of a line: short stray/missing
-// slivers at the LEFT of the screen, i.e. on the clock's hour digit (Oliver's
-// "flickery 7", 2026-11-25). 20 lines (~0.9 ms of slack) per half; 480*480 is
-// a multiple of 480*20 as ESP-IDF requires. Costs ~19 KB more internal RAM.
-#define LCD_BOUNCE_LINES 20
+// Left-edge slivers (Oliver, 2026-11-25/26): stray/missing pixels at the
+// START of scanlines on both the clock and day view. Panel timing is not the
+// cause: porches/pulses/polarity/pclk edge match Waveshare's own Arduino demos
+// for this board exactly (H 10/8/50, V 10/8/20, polarity 1, 12 MHz default).
+// The cause is the bounce-buffer refill ISR running late: in the Arduino-ESP32
+// S3 build CONFIG_LCD_RGB_ISR_IRAM_SAFE and SPIRAM XIP (FETCH_INSTRUCTIONS /
+// RODATA) are off and Wi-Fi/lwIP buffers are in PSRAM, so the ISR shares the
+// flash/PSRAM bus with Wi-Fi bursts; when a refill is late the DMA scans stale
+// data for the first pixels of the next band. Waveshare's bundled GFX library
+// hardcodes 40-line bounce buffers for this reason. 20 lines at 12 MHz (0.9 ms)
+// was not enough. Now 30 lines at 10 MHz pclk: 548 px/line -> 54.8 us/line,
+// ~1.64 ms of slack per half (1.8x), ~35 fps (fine for LCD). 480 is a multiple
+// of 30 as ESP-IDF requires. Wi-Fi power save is off too (morning_net.cpp).
+// Internal RAM: 2 x 480 x 30 x 2 = 57.6 KB (TLS buffers are internal here).
+#define LCD_BOUNCE_LINES 30
+#define LCD_PCLK_HZ      10000000
 //
 // Do not call rgbpanel->getFrameBuffer() after gfx->begin() — that
 // reconstructs the RGB panel a second time and crashes (no free slot).
@@ -38,7 +45,7 @@ void display_hal_init(void) {
         8 /* hsync_pulse_width */, 50 /* hsync_back_porch */,
         1 /* vsync_polarity */, 10 /* vsync_front_porch */,
         8 /* vsync_pulse_width */, 20 /* vsync_back_porch */,
-        0 /* pclk_active_neg */, GFX_NOT_DEFINED /* prefer_speed */,
+        0 /* pclk_active_neg */, LCD_PCLK_HZ /* prefer_speed */,
         false /* useBigEndian */,
         0 /* de_idle_high */, 0 /* pclk_idle_high */,
         LCD_WIDTH * LCD_BOUNCE_LINES /* bounce_buffer_size_px */);
